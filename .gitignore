@@ -1,0 +1,23 @@
+# Build outputs
+bin/
+*.bin
+*.img
+
+# Local binaries (root-of-repo build artifacts)
+/openqiarad
+/openqiarad_*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*~
+
+# Local config / secrets (never commit personal IPs, keys, broker creds)
+*.local.json
+.env
+.env.local

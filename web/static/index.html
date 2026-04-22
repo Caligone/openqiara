@@ -1,0 +1,1103 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OpenQiara</title>
+<style>
+:root {
+  --bg: #0f1117;
+  --surface: #1a1d27;
+  --border: #2a2d3a;
+  --text: #e0e0e6;
+  --text-muted: #8888a0;
+  --primary: #6c8cff;
+  --success: #4caf80;
+  --danger: #e05050;
+  --warning: #e0a030;
+  --radius: 8px;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+a { color: var(--primary); }
+
+/* Layout */
+.header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 12px 20px; display: flex; align-items: center; justify-content: space-between; }
+.header h1 { font-size: 18px; font-weight: 600; }
+.status-bar { display: flex; gap: 16px; font-size: 13px; color: var(--text-muted); }
+.status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+.status-dot.on { background: var(--success); }
+.status-dot.off { background: var(--danger); }
+
+.container { max-width: 800px; margin: 0 auto; padding: 20px; }
+
+/* Tabs */
+.tabs { display: flex; gap: 4px; margin-bottom: 20px; }
+.tab { background: transparent; border: 1px solid var(--border); color: var(--text-muted); padding: 8px 16px; border-radius: var(--radius); cursor: pointer; font-size: 14px; }
+.tab.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+
+/* Cards */
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 12px; }
+.card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.card-title { font-weight: 600; font-size: 15px; }
+.card-meta { display: flex; gap: 16px; font-size: 13px; color: var(--text-muted); }
+
+/* Sensor state */
+.sensor-state { font-size: 13px; font-weight: 600; padding: 2px 8px; border-radius: 4px; }
+.sensor-state.closed { background: rgba(76,175,128,0.15); color: var(--success); }
+.sensor-state.open { background: rgba(224,80,80,0.15); color: var(--danger); }
+
+.sensor-icon { font-size: 24px; margin-right: 12px; }
+.sensor-row { display: flex; align-items: center; }
+
+/* Form */
+.form-group { margin-bottom: 12px; }
+.form-group label { display: block; font-size: 13px; color: var(--text-muted); margin-bottom: 4px; }
+.form-group input, .form-group select { width: 100%; padding: 8px 12px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); font-size: 14px; }
+.form-group input:focus, .form-group select:focus { outline: none; border-color: var(--primary); }
+
+.btn { padding: 8px 20px; border: none; border-radius: var(--radius); font-size: 14px; cursor: pointer; font-weight: 500; }
+.btn-primary { background: var(--primary); color: #fff; }
+.btn-danger { background: var(--danger); color: #fff; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.msg { padding: 8px 12px; border-radius: var(--radius); font-size: 13px; margin-top: 8px; }
+.msg.info { background: rgba(108,140,255,0.15); color: var(--primary); }
+.msg.success { background: rgba(76,175,128,0.15); color: var(--success); }
+.msg.error { background: rgba(224,80,80,0.15); color: var(--danger); }
+
+.empty { text-align: center; color: var(--text-muted); padding: 40px 0; }
+
+.btn-icon { background: transparent; border: 1px solid var(--border); color: var(--text-muted); padding: 4px 8px; border-radius: var(--radius); cursor: pointer; font-size: 14px; line-height: 1; }
+.btn-icon:hover { border-color: var(--danger); color: var(--danger); }
+
+/* Responsive */
+@media (max-width: 600px) {
+  .card-meta { flex-wrap: wrap; gap: 8px; }
+  .header { flex-direction: column; gap: 8px; align-items: flex-start; }
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>OpenQiara</h1>
+  <div class="status-bar">
+    <span><span class="status-dot" id="mqtt-dot"></span>MQTT: <span id="mqtt-status">--</span></span>
+    <span>Uptime: <span id="uptime">--</span></span>
+    <span>Capteurs: <span id="sensor-count">--</span></span>
+  </div>
+</div>
+
+<div class="container">
+  <div class="tabs">
+    <button class="tab active" data-tab="sensors">Capteurs</button>
+    <button class="tab" data-tab="alarm">Alarme</button>
+    <button class="tab" data-tab="pairing">Appairage</button>
+    <button class="tab" data-tab="camera">Caméra</button>
+    <button class="tab" data-tab="config">Configuration</button>
+  </div>
+
+  <!-- Sensors tab -->
+  <div id="tab-sensors" class="tab-content">
+    <div id="sensors-list"></div>
+  </div>
+
+  <!-- Alarm tab -->
+  <div id="tab-alarm" class="tab-content" style="display:none">
+    <div class="card" id="alarm-status-card" style="text-align:center;padding:24px">
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:8px">État de l'alarme</div>
+      <div id="alarm-state-label" style="font-size:24px;font-weight:700;margin-bottom:4px">--</div>
+      <div id="alarm-state-detail" style="font-size:13px;color:var(--text-muted);min-height:18px;margin-bottom:16px"></div>
+      <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+        <button class="btn" style="background:var(--danger);color:#fff" onclick="setAlarm('arm_away')">Armer (Total)</button>
+        <button class="btn" style="background:var(--warning);color:#fff" onclick="setAlarm('arm_night')">Armer (Nuit)</button>
+        <button class="btn" style="background:var(--success);color:#fff" onclick="setAlarm('disarm')">Désarmer</button>
+      </div>
+      <div id="alarm-msg"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title" style="margin-bottom:12px">Code clavier (KPD)</div>
+      <div id="codes-list" style="margin-bottom:12px"></div>
+      <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:12px">
+        <div style="font-size:14px;font-weight:500;margin-bottom:8px">Modifier le code</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+          <div class="form-group" style="margin-bottom:0;flex:1;min-width:100px">
+            <label>Code (4 chiffres)</label>
+            <input type="text" id="code-pwd" maxlength="4" pattern="[0-9]{4}" placeholder="1234">
+          </div>
+          <div class="form-group" style="margin-bottom:0;flex:1;min-width:100px">
+            <label>Libellé</label>
+            <input type="text" id="code-label" placeholder="admin">
+          </div>
+          <button class="btn btn-primary" onclick="addCode()">Enregistrer</button>
+        </div>
+        <p style="color:var(--text-muted);font-size:12px;margin-top:8px">Le code sera actif au prochain démarrage du clavier (cycle batterie)</p>
+      </div>
+      <div id="codes-msg"></div>
+    </div>
+  </div>
+
+  <!-- Pairing tab -->
+  <div id="tab-pairing" class="tab-content" style="display:none">
+    <div class="card">
+      <div class="card-title" style="margin-bottom:12px">Ajouter un capteur</div>
+      <div class="form-group">
+        <label>Type de capteur</label>
+        <select id="pair-type">
+          <option value="DWS">DWS - Ouverture porte/fenêtre</option>
+          <option value="PIR">PIR - Détecteur de mouvement</option>
+          <option value="SRN">SRN - Sirène</option>
+          <option value="KPD">KPD - Clavier</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Fingerprint <span style="color:var(--text-muted);font-size:12px">16 hex chars du QR code au dos du capteur</span></label>
+        <input type="text" id="pair-fingerprint" placeholder="cca878cd4128e306" maxlength="16" pattern="[0-9a-fA-F]{16}">
+      </div>
+      <button class="btn btn-primary" id="pair-start">Démarrer l'appairage</button>
+      <button class="btn btn-danger" id="pair-cancel" style="display:none">Annuler</button>
+      <div id="pair-msg"></div>
+    </div>
+  </div>
+
+  <!-- Camera tab -->
+  <div id="tab-camera" class="tab-content" style="display:none">
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Cache objectif</span>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-primary" onclick="setShutter(true)" id="shutter-open-btn">Ouvrir</button>
+          <button class="btn" style="background:var(--border);color:var(--text)" onclick="setShutter(false)" id="shutter-close-btn">Fermer</button>
+        </div>
+      </div>
+      <div id="shutter-msg"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Flux vidéo</span>
+        <button class="btn btn-primary" id="stream-open">Démarrer</button>
+      </div>
+      <div id="stream-info" style="display:none;margin-top:12px">
+        <video id="stream-video" controls autoplay muted playsinline style="width:100%;border-radius:var(--radius);background:#000;max-height:400px"></video>
+        <div style="margin-top:8px">
+          <div class="form-group" style="margin-bottom:0">
+            <label>URL HLS (VLC ou autre lecteur)</label>
+            <input type="text" id="stream-url" readonly style="cursor:pointer;font-size:12px" onclick="this.select();document.execCommand('copy')">
+          </div>
+        </div>
+      </div>
+      <div id="stream-msg"></div>
+    </div>
+  </div>
+
+  <!-- Config tab -->
+  <div id="tab-config" class="tab-content" style="display:none">
+    <div class="card">
+      <!-- Alarme -->
+      <div class="card-title" style="margin-bottom:12px">Alarme</div>
+      <div class="form-group">
+        <label>Mode</label>
+        <select id="cfg-alarm-mode">
+          <option value="standalone">Autonome</option>
+          <option value="alarmo">Alarmo (via Home Assistant)</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Sons sirène</label>
+        <select id="cfg-siren-sounds">
+          <option value="all">Tous (arm + disarm + alarme)</option>
+          <option value="alarm_only">Alarme uniquement</option>
+          <option value="none">Désactivé</option>
+        </select>
+      </div>
+      <div id="cfg-charmux-timings">
+        <div class="form-group">
+          <label>Délai d'armement (s) <span style="color:var(--text-muted);font-size:12px">temps avant que la surveillance démarre après ARM</span></label>
+          <input type="number" id="cfg-arming-delay" min="0" max="600" step="1">
+        </div>
+        <div class="form-group">
+          <label>Délai de pré-alarme (s) <span style="color:var(--text-muted);font-size:12px">temps après détection avant que la sirène se déclenche</span></label>
+          <input type="number" id="cfg-pending-delay" min="0" max="600" step="1">
+        </div>
+        <div class="form-group">
+          <label>Durée du wail (s) <span style="color:var(--text-muted);font-size:12px">durée du burst d'alarme avant arrêt</span></label>
+          <input type="number" id="cfg-wail-duration" min="1" max="60" step="1">
+        </div>
+      </div>
+      <div id="cfg-fbxhome-timings" style="display:none">
+        <div class="form-group">
+          <label>Délai d'armement (s) <span style="color:var(--text-muted);font-size:12px">temps avant que la surveillance démarre après ARM</span></label>
+          <input type="number" id="cfg-fbx-armed" min="0" max="600" step="1">
+        </div>
+        <div class="form-group">
+          <label>Délai de pré-alarme (s) <span style="color:var(--text-muted);font-size:12px">temps après détection (si capteur en mode timed) avant que la sirène se déclenche</span></label>
+          <input type="number" id="cfg-fbx-alert" min="0" max="600" step="1">
+        </div>
+        <div class="form-group">
+          <label>Durée max du wail (s) <span style="color:var(--text-muted);font-size:12px">durée avant arrêt automatique du wail</span></label>
+          <input type="number" id="cfg-fbx-wail" min="10" max="3600" step="1">
+        </div>
+      </div>
+
+      <hr style="border:none;border-top:1px solid var(--border);margin:20px 0">
+
+      <!-- Sécurité -->
+      <div class="card-title" style="margin-bottom:12px">Sécurité</div>
+      <div class="form-group">
+        <label>Mot de passe admin <span id="cfg-admin-status" style="color:var(--text-muted);font-size:12px"></span></label>
+        <input type="password" id="cfg-admin-password" placeholder="(laisser vide pour désactiver)" autocomplete="new-password">
+      </div>
+
+      <hr style="border:none;border-top:1px solid var(--border);margin:20px 0">
+
+      <!-- Avancé (plié par défaut) -->
+      <div style="cursor:pointer;display:flex;align-items:center;gap:6px;margin-bottom:12px" id="cfg-advanced-toggle">
+        <span id="cfg-advanced-arrow" style="transition:transform 0.2s">▶</span>
+        <span class="card-title" style="margin:0">Avancé</span>
+      </div>
+      <div id="cfg-advanced" style="display:none">
+        <!-- MQTT -->
+        <div style="font-weight:600;font-size:14px;margin-bottom:8px">MQTT</div>
+        <div class="form-group">
+          <label>Broker</label>
+          <input type="text" id="cfg-broker" placeholder="tcp://192.168.1.100:1883">
+        </div>
+        <div class="form-group">
+          <label>Utilisateur</label>
+          <input type="text" id="cfg-username" placeholder="(optionnel)">
+        </div>
+        <div class="form-group">
+          <label>Mot de passe MQTT</label>
+          <input type="password" id="cfg-password" placeholder="(optionnel)">
+        </div>
+        <div class="form-group">
+          <label>Préfixe topic</label>
+          <input type="text" id="cfg-prefix" placeholder="openqiara">
+        </div>
+        <div id="cfg-alarmo-topics" style="display:none">
+          <div class="form-group">
+            <label>Topic de commande Alarmo</label>
+            <input type="text" id="cfg-alarmo-cmd" placeholder="alarmo/command">
+          </div>
+          <div class="form-group">
+            <label>Topic d'état Alarmo</label>
+            <input type="text" id="cfg-alarmo-state" placeholder="alarmo/state">
+          </div>
+        </div>
+
+        <!-- HomeKit -->
+        <div style="font-weight:600;font-size:14px;margin:16px 0 8px">HomeKit</div>
+        <div class="form-group">
+          <label>Activer HomeKit</label>
+          <select id="cfg-hk-enabled">
+            <option value="false">Désactivé</option>
+            <option value="true">Activé</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Code d'appairage</label>
+          <input type="text" id="cfg-hk-pin" placeholder="00102003">
+        </div>
+        <div class="form-group">
+          <label>Nom du bridge</label>
+          <input type="text" id="cfg-hk-name" placeholder="OpenQiara">
+        </div>
+        <div class="form-group">
+          <label>Caméra HomeKit</label>
+          <select id="cfg-hk-camera-enabled">
+            <option value="false">Désactivée</option>
+            <option value="true">Activée (flux live iPhone)</option>
+          </select>
+        </div>
+        <div style="color:var(--text-muted);font-size:12px;margin-top:-4px;margin-bottom:12px">
+          ⚠️ Un redémarrage d'openqiarad est nécessaire pour appliquer les changements HomeKit (activation, PIN, nom, caméra).
+        </div>
+
+        <!-- Interface web -->
+        <div style="font-weight:600;font-size:14px;margin:16px 0 8px">Interface web</div>
+        <div class="form-group">
+          <label>État</label>
+          <select id="cfg-web-enabled">
+            <option value="true">Activée</option>
+            <option value="false">Désactivée (headless)</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Un seul bouton Enregistrer -->
+      <button class="btn btn-primary" id="cfg-save-all" style="margin-top:16px">Enregistrer</button>
+      <div id="cfg-msg"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = '';
+
+// --- Tabs ---
+document.querySelectorAll('.tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.style.display = 'none');
+    btn.classList.add('active');
+    document.getElementById('tab-' + btn.dataset.tab).style.display = 'block';
+  });
+});
+
+// --- Status polling ---
+function formatUptime(seconds) {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  return h > 0 ? h + 'h ' + m + 'min' : m + 'min';
+}
+
+async function fetchStatus() {
+  try {
+    const r = await fetch(API + '/api/status');
+    const d = await r.json();
+    applyStatus(d);
+  } catch (e) {
+    const ms = document.getElementById('mqtt-status');
+    const md = document.getElementById('mqtt-dot');
+    if (ms) ms.textContent = 'erreur';
+    if (md) md.className = 'status-dot off';
+  }
+}
+
+// --- Sensors ---
+function sensorIcon(type) {
+  switch (type) {
+    case 'DWS': return '🚪';
+    case 'PIR': return '👁';
+    case 'SRN': return '🔔';
+    case 'KPD': return '⌨️';
+    default: return '📡';
+  }
+}
+
+function sensorStateLabel(sensor) {
+  if (sensor.type === 'DWS') return sensor.open ? 'Ouvert' : 'Fermé';
+  if (sensor.type === 'PIR') return sensor.motion ? 'Mouvement' : 'OK';
+  if (sensor.type === 'SRN') return sensor.reachable ? 'Prête' : 'Hors ligne';
+  return sensor.reachable ? 'En ligne' : 'Hors ligne';
+}
+
+function sensorStateClass(sensor) {
+  if (sensor.type === 'DWS') return sensor.open ? 'open' : 'closed';
+  if (sensor.type === 'PIR') return sensor.motion ? 'open' : 'closed';
+  return sensor.reachable ? 'closed' : 'open';
+}
+
+async function fetchSensors() {
+  try {
+    const r = await fetch(API + '/api/sensors');
+    const sensors = await r.json();
+    renderSensors(sensors);
+  } catch (e) {
+    const list = document.getElementById('sensors-list');
+    if (list) list.innerHTML = '<div class="msg error">Erreur chargement capteurs</div>';
+  }
+}
+
+async function renameSensor(id, current) {
+  const label = prompt('Nouveau nom du capteur :', current);
+  if (!label || label.trim() === '') return;
+  try {
+    const r = await fetch(API + '/api/sensors/' + id, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({label: label.trim()})
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    fetchSensors();
+  } catch (e) {
+    alert('Erreur renommage: ' + e.message);
+  }
+}
+
+async function deleteSensor(id) {
+  if (!confirm('Supprimer ce capteur ?')) return;
+  try {
+    const r = await fetch(API + '/api/sensors/' + id, {method: 'DELETE'});
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    fetchSensors();
+  } catch (e) {
+    alert('Erreur suppression: ' + e.message);
+  }
+}
+
+async function testSiren() {
+  if (!confirm('Tester la sirène ?')) return;
+  try {
+    const r = await fetch(API + '/api/siren/test', {method: 'POST'});
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+  } catch (e) {
+    alert('Erreur: ' + e.message);
+  }
+}
+
+// --- Pairing ---
+let pairingSession = null;
+let pairingTimer = null;
+
+document.getElementById('pair-start').addEventListener('click', async () => {
+  const type = document.getElementById('pair-type').value;
+  const fingerprint = document.getElementById('pair-fingerprint').value.trim().toLowerCase();
+  const msg = document.getElementById('pair-msg');
+  msg.className = 'msg info';
+  if (fingerprint && !/^[0-9a-f]{16}$/.test(fingerprint)) {
+    msg.className = 'msg error';
+    msg.textContent = 'Fingerprint invalide (16 caractères hex attendus)';
+    return;
+  }
+  msg.textContent = 'Démarrage...';
+  try {
+    const body = {type};
+    if (fingerprint) body.fingerprint = fingerprint;
+    const r = await fetch(API + '/api/sensors/pair', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body)
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    pairingSession = d.session;
+    msg.textContent = 'Appairage en cours... Activez le capteur.';
+    document.getElementById('pair-start').style.display = 'none';
+    document.getElementById('pair-cancel').style.display = 'inline-block';
+    pairingTimer = setInterval(pollPairing, 2000);
+  } catch (e) {
+    msg.className = 'msg error';
+    msg.textContent = e.message;
+  }
+});
+
+async function pollPairing() {
+  const msg = document.getElementById('pair-msg');
+  try {
+    const r = await fetch(API + '/api/sensors/pair?session=' + pairingSession);
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    if (d.done) {
+      clearInterval(pairingTimer);
+      pairingTimer = null;
+      pairingSession = null;
+      msg.className = 'msg success';
+      msg.textContent = 'Capteur appairé avec succès !';
+      document.getElementById('pair-start').style.display = 'inline-block';
+      document.getElementById('pair-cancel').style.display = 'none';
+      fetchSensors();
+    }
+  } catch (e) {
+    clearInterval(pairingTimer);
+    pairingTimer = null;
+    msg.className = 'msg error';
+    msg.textContent = e.message;
+    document.getElementById('pair-start').style.display = 'inline-block';
+    document.getElementById('pair-cancel').style.display = 'none';
+  }
+}
+
+document.getElementById('pair-cancel').addEventListener('click', async () => {
+  if (pairingTimer) clearInterval(pairingTimer);
+  pairingTimer = null;
+  const msg = document.getElementById('pair-msg');
+  try {
+    await fetch(API + '/api/sensors/pair?session=' + pairingSession, {method: 'DELETE'});
+    msg.className = 'msg info';
+    msg.textContent = 'Appairage annulé.';
+  } catch (e) {
+    msg.className = 'msg error';
+    msg.textContent = 'Erreur annulation: ' + e.message;
+  }
+  pairingSession = null;
+  document.getElementById('pair-start').style.display = 'inline-block';
+  document.getElementById('pair-cancel').style.display = 'none';
+});
+
+async function setShutter(open) {
+  const msg = document.getElementById('shutter-msg');
+  msg.textContent = '';
+  try {
+    const r = await fetch(API + '/api/shutter', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({open})
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    msg.className = 'msg success';
+    msg.textContent = open ? 'Cache ouvert' : 'Cache fermé';
+  } catch (e) {
+    msg.className = 'msg error';
+    msg.textContent = e.message;
+  }
+}
+
+// --- Video ---
+document.getElementById('stream-open').addEventListener('click', async () => {
+  const msg = document.getElementById('stream-msg');
+  const btn = document.getElementById('stream-open');
+  msg.className = 'msg info';
+  msg.textContent = 'Activation du flux...';
+  btn.disabled = true;
+  try {
+    const r = await fetch(API + '/api/stream/start', {method: 'POST'});
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+
+    const hlsUrl = location.origin + d['720'];
+    document.getElementById('stream-url').value = hlsUrl;
+    document.getElementById('stream-info').style.display = 'block';
+    msg.textContent = '';
+
+    const video = document.getElementById('stream-video');
+    if (video.canPlayType('application/vnd.apple.mpegurl') && navigator.userAgent.includes('Safari') && !navigator.userAgent.includes('Chrome')) {
+      video.src = hlsUrl;
+    } else {
+      video.style.display = 'none';
+      msg.className = 'msg info';
+      msg.innerHTML = 'Le flux H.265 nécessite <b>Safari</b> ou <b>VLC</b>. Copiez le lien ci-dessous et ouvrez-le dans VLC (Fichier → Ouvrir un flux réseau).';
+    }
+    btn.textContent = 'Flux actif';
+  } catch (e) {
+    msg.className = 'msg error';
+    msg.textContent = e.message;
+    btn.disabled = false;
+  }
+});
+
+// --- Alarm ---
+const alarmLabels = {
+  disarmed: 'Désarmé',
+  arming: 'Armement en cours',
+  armed_away: 'Armé Total',
+  armed_night: 'Armé Nuit',
+  pending: 'Intrusion détectée',
+  triggered: 'Alarme déclenchée'
+};
+const alarmColors = {
+  disarmed: 'var(--success)',
+  arming: 'var(--warning)',
+  armed_away: 'var(--danger)',
+  armed_night: 'var(--warning)',
+  pending: 'var(--danger)',
+  triggered: 'var(--danger)'
+};
+
+async function fetchAlarm() {
+  try {
+    const r = await fetch(API + '/api/alarm');
+    const d = await r.json();
+    applyAlarmSnapshot(d);
+  } catch (e) {
+    const lbl = document.getElementById('alarm-state-label');
+    if (lbl) lbl.textContent = 'Erreur';
+  }
+}
+
+async function setNightAllowed(id, allowed) {
+  try {
+    const r = await fetch(API + '/api/sensors/' + id, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({night_allowed: allowed})
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+  } catch (e) {
+    alert('Erreur : ' + e.message);
+    fetchSensors();
+  }
+}
+
+async function setSensorFlag(id, key, val) {
+  try {
+    const r = await fetch(API + '/api/sensors/' + id, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({[key]: val})
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+  } catch (e) {
+    alert('Erreur : ' + e.message);
+    fetchSensors();
+  }
+}
+
+async function setAlarm(action) {
+  const msg = document.getElementById('alarm-msg');
+  msg.textContent = '';
+  try {
+    const r = await fetch(API + '/api/alarm', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({action})
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    fetchAlarm();
+  } catch (e) {
+    msg.className = 'msg error';
+    msg.textContent = e.message;
+  }
+}
+
+// --- KPD Code ---
+async function fetchCodes() {
+  const list = document.getElementById('codes-list');
+  try {
+    const r = await fetch(API + '/api/codes');
+    const d = await r.json();
+    if (d.error) {
+      list.innerHTML = '<div class="msg info">' + d.error + '</div>';
+      return;
+    }
+    if (!d.code) {
+      list.innerHTML = '<div style="color:var(--text-muted);font-size:13px">Aucun code configuré</div>';
+      document.getElementById('code-pwd').value = '';
+      document.getElementById('code-label').value = '';
+      return;
+    }
+    list.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--surface);border-radius:6px;border:1px solid var(--border)">
+        <div>
+          <span style="font-weight:500">${d.code.label || 'Code'}</span>
+          <span style="color:var(--text-muted);margin-left:8px;font-family:monospace">${d.code.password}</span>
+        </div>
+        <button class="btn-icon" onclick="deleteCode()" title="Supprimer">🗑️</button>
+      </div>`;
+    document.getElementById('code-pwd').value = d.code.password;
+    document.getElementById('code-label').value = d.code.label || '';
+  } catch (e) {
+    list.innerHTML = '<div class="msg error">Erreur chargement code</div>';
+  }
+}
+
+async function addCode() {
+  const pwd = document.getElementById('code-pwd').value.trim();
+  const label = document.getElementById('code-label').value.trim() || 'Code';
+  const msg = document.getElementById('codes-msg');
+  msg.textContent = '';
+
+  if (!/^\d{4}$/.test(pwd)) {
+    msg.className = 'msg error';
+    msg.textContent = 'Le code doit être composé de 4 chiffres';
+    return;
+  }
+
+  try {
+    const r = await fetch(API + '/api/codes', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({password: pwd, label: label})
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    msg.className = 'msg success';
+    msg.textContent = 'Code enregistré. Actif au prochain cycle batterie du clavier.';
+    fetchCodes();
+  } catch (e) {
+    msg.className = 'msg error';
+    msg.textContent = e.message;
+  }
+}
+
+async function deleteCode() {
+  if (!confirm('Supprimer le code ?')) return;
+  const msg = document.getElementById('codes-msg');
+  msg.textContent = '';
+  try {
+    const r = await fetch(API + '/api/codes', {method: 'DELETE'});
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    msg.className = 'msg success';
+    msg.textContent = 'Code supprimé.';
+    fetchCodes();
+  } catch (e) {
+    msg.className = 'msg error';
+    msg.textContent = e.message;
+  }
+}
+
+// --- Config ---
+async function loadConfig() {
+  try {
+    const r = await fetch(API + '/api/config');
+    const d = await r.json();
+    document.getElementById('cfg-broker').value = d.mqtt.broker || '';
+    document.getElementById('cfg-username').value = d.mqtt.username || '';
+    document.getElementById('cfg-password').value = '';
+    document.getElementById('cfg-password').placeholder = d.mqtt.password ? '(inchangé)' : '(optionnel)';
+    document.getElementById('cfg-prefix').value = d.mqtt.topic_prefix || '';
+    // HomeKit
+    if (d.homekit) {
+      document.getElementById('cfg-hk-enabled').value = d.homekit.enabled ? 'true' : 'false';
+      document.getElementById('cfg-hk-pin').value = d.homekit.pin || '';
+      document.getElementById('cfg-hk-name').value = d.homekit.name || '';
+      const camEnabled = d.homekit.camera && d.homekit.camera.enabled ? 'true' : 'false';
+      document.getElementById('cfg-hk-camera-enabled').value = camEnabled;
+    }
+    // Admin
+    const adminStatus = document.getElementById('cfg-admin-status');
+    if (adminStatus) {
+      adminStatus.textContent = d.admin && d.admin.password_set ? '— authentification activée' : '— authentification désactivée';
+    }
+    // Alarm
+    if (d.alarm) {
+      const mode = d.alarm.mode || 'standalone';
+      document.getElementById('cfg-alarm-mode').value = mode;
+      document.getElementById('cfg-alarmo-cmd').value = d.alarm.alarmo_command_topic || 'alarmo/command';
+      document.getElementById('cfg-alarmo-state').value = d.alarm.alarmo_state_topic || 'alarmo/state';
+      document.getElementById('cfg-alarmo-topics').style.display = mode === 'alarmo' ? '' : 'none';
+      document.getElementById('cfg-siren-sounds').value = d.alarm.siren_sounds || 'all';
+      document.getElementById('cfg-arming-delay').value = d.alarm.arming_delay_seconds ?? 60;
+      document.getElementById('cfg-pending-delay').value = d.alarm.pending_delay_seconds ?? 60;
+      document.getElementById('cfg-wail-duration').value = d.alarm.wail_duration_seconds ?? 3;
+      window.currentAlarmMode = mode;
+    }
+    // Camera mode: fbxhome owns alarm timings; show fbxhome-specific
+    // inputs in that mode, charmux-style inputs otherwise.
+    //
+    // Logique d'affichage :
+    //   - Les délais "engine local" (charmux-timings) sont affichés quand
+    //     alarm.mode == standalone : c'est l'engine openqiara qui décide,
+    //     peu importe le backend caméra (charmux ou fbxhome bridge).
+    //   - Les délais "fbxhome" (fbxhome-timings) sont affichés quand
+    //     camera_mode == fbxhome ET alarm.mode == alarmo : Alarmo HA pilote,
+    //     openqiara forward, mais fbxhome a ses propres timers radio.
+    const camMode = d.camera_mode || 'fbxhome';
+    const alarmMode = (d.alarm && d.alarm.mode) || 'standalone';
+    window.currentCameraMode = camMode;
+    window.currentAlarmMode = alarmMode;
+    const charmuxTimings = document.getElementById('cfg-charmux-timings');
+    const fbxTimings = document.getElementById('cfg-fbxhome-timings');
+    if (charmuxTimings && fbxTimings) {
+      const showLocal = alarmMode === 'standalone';
+      const showFbx = !showLocal && camMode === 'fbxhome';
+      charmuxTimings.style.display = showLocal ? '' : 'none';
+      fbxTimings.style.display = showFbx ? '' : 'none';
+    }
+    // Load fbxhome timings on-demand (separate endpoint reading the XML).
+    if (camMode === 'fbxhome') {
+      try {
+        const fr = await fetch(API + '/api/config/fbxhome_alarm');
+        if (fr.ok) {
+          const ft = await fr.json();
+          document.getElementById('cfg-fbx-armed').value = ft.timeout_before_armed ?? 30;
+          document.getElementById('cfg-fbx-alert').value = ft.timeout_before_alert ?? 30;
+          document.getElementById('cfg-fbx-wail').value = ft.timeout_alert ?? 300;
+        }
+      } catch (e) { /* ignore */ }
+    }
+    // Web
+    if (d.web) {
+      document.getElementById('cfg-web-enabled').value = d.web.enabled ? 'true' : 'false';
+    }
+  } catch (e) { /* ignore */ }
+}
+
+// Toggle Alarmo topics + timings blocs en fonction du mode d'alarme choisi.
+document.addEventListener('DOMContentLoaded', () => {
+  const modeSel = document.getElementById('cfg-alarm-mode');
+  if (modeSel) {
+    modeSel.addEventListener('change', () => {
+      const m = modeSel.value;
+      document.getElementById('cfg-alarmo-topics').style.display = m === 'alarmo' ? '' : 'none';
+      // Sync l'affichage des blocs de timings : standalone = délais engine
+      // local, alarmo = délais fbxhome (si mode camera=fbxhome).
+      window.currentAlarmMode = m;
+      const camMode = window.currentCameraMode || 'fbxhome';
+      const showLocal = m === 'standalone';
+      const showFbx = !showLocal && camMode === 'fbxhome';
+      const cTim = document.getElementById('cfg-charmux-timings');
+      const fTim = document.getElementById('cfg-fbxhome-timings');
+      if (cTim) cTim.style.display = showLocal ? '' : 'none';
+      if (fTim) fTim.style.display = showFbx ? '' : 'none';
+    });
+  }
+});
+
+// Toggle avancé
+document.getElementById('cfg-advanced-toggle').addEventListener('click', () => {
+  const sec = document.getElementById('cfg-advanced');
+  const arrow = document.getElementById('cfg-advanced-arrow');
+  const open = sec.style.display === 'none';
+  sec.style.display = open ? '' : 'none';
+  arrow.style.transform = open ? 'rotate(90deg)' : '';
+});
+
+// Un seul bouton Enregistrer — sauvegarde toutes les sections en parallèle
+document.getElementById('cfg-save-all').addEventListener('click', async () => {
+  const msg = document.getElementById('cfg-msg');
+  msg.className = ''; msg.textContent = '';
+
+  const webEnabled = document.getElementById('cfg-web-enabled').value === 'true';
+  if (!webEnabled && !confirm('Désactiver l\'interface web ? Vous ne pourrez plus y accéder après redémarrage.')) {
+    return;
+  }
+  const adminPwd = document.getElementById('cfg-admin-password').value;
+
+  const calls = [];
+
+  // MQTT
+  const mqttBody = {
+    broker: document.getElementById('cfg-broker').value,
+    username: document.getElementById('cfg-username').value,
+    topic_prefix: document.getElementById('cfg-prefix').value,
+  };
+  const mqttPwd = document.getElementById('cfg-password').value;
+  if (mqttPwd) mqttBody.password = mqttPwd;
+  calls.push(fetch(API + '/api/config/mqtt', {
+    method: 'PUT', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(mqttBody)
+  }));
+
+  // HomeKit
+  calls.push(fetch(API + '/api/config/homekit', {
+    method: 'PUT', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      enabled: document.getElementById('cfg-hk-enabled').value === 'true',
+      pin: document.getElementById('cfg-hk-pin').value,
+      name: document.getElementById('cfg-hk-name').value,
+      camera: {
+        enabled: document.getElementById('cfg-hk-camera-enabled').value === 'true',
+      },
+    })
+  }));
+
+  // Alarme
+  calls.push(fetch(API + '/api/config/alarm', {
+    method: 'PUT', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      mode: document.getElementById('cfg-alarm-mode').value,
+      alarmo_command_topic: document.getElementById('cfg-alarmo-cmd').value,
+      alarmo_state_topic: document.getElementById('cfg-alarmo-state').value,
+      siren_sounds: document.getElementById('cfg-siren-sounds').value,
+      arming_delay_seconds: parseInt(document.getElementById('cfg-arming-delay').value, 10),
+      pending_delay_seconds: parseInt(document.getElementById('cfg-pending-delay').value, 10),
+      wail_duration_seconds: parseInt(document.getElementById('cfg-wail-duration').value, 10),
+    })
+  }));
+
+  // fbxhome timings (uniquement en mode camera=fbxhome ET alarm=alarmo —
+  // ces délais ne sont pas pertinents en standalone, l'engine local pilote).
+  const camMode = window.currentCameraMode || 'fbxhome';
+  const alarmMode = window.currentAlarmMode || 'standalone';
+  if (camMode === 'fbxhome' && alarmMode !== 'standalone') {
+    calls.push(fetch(API + '/api/config/fbxhome_alarm', {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        timeout_before_armed: parseInt(document.getElementById('cfg-fbx-armed').value, 10),
+        timeout_before_alert: parseInt(document.getElementById('cfg-fbx-alert').value, 10),
+        timeout_alert: parseInt(document.getElementById('cfg-fbx-wail').value, 10),
+      })
+    }));
+  }
+
+  // Web
+  calls.push(fetch(API + '/api/config/web', {
+    method: 'PUT', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({enabled: webEnabled})
+  }));
+
+  // Admin (seulement si le champ est rempli)
+  if (adminPwd !== undefined) {
+    calls.push(fetch(API + '/api/config/admin', {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({password: adminPwd})
+    }));
+  }
+
+  try {
+    const results = await Promise.all(calls);
+    for (const r of results) {
+      const d = await r.json();
+      if (d.error) throw new Error(d.error);
+    }
+    msg.className = 'msg success';
+    msg.textContent = 'Configuration sauvegardée.';
+    window.currentAlarmMode = document.getElementById('cfg-alarm-mode').value;
+    document.getElementById('cfg-admin-password').value = '';
+    fetchSensors();
+  } catch (e) {
+    msg.className = 'msg error';
+    msg.textContent = e.message;
+  }
+});
+
+// --- Init ---
+fetchStatus();
+fetchSensors();
+fetchAlarm();
+fetchCodes();
+loadConfig();
+
+// --- Server-Sent Events ---
+// Replaces polling with a single streaming connection. The server pushes:
+//   - alarm:   AlarmSnapshot   (on state change + every 1s during timer phases)
+//   - sensors: Sensor[]         (on each sensor state change)
+//   - status:  {mqtt_connected, sensor_count, uptime}  (every 5s)
+//
+// EventSource auto-reconnects on disconnect.
+function startEventStream() {
+  const es = new EventSource(API + '/api/events');
+
+  es.addEventListener('alarm', (e) => {
+    try {
+      const snap = JSON.parse(e.data);
+      applyAlarmSnapshot(snap);
+    } catch (_) {}
+  });
+
+  es.addEventListener('sensors', (e) => {
+    try {
+      const sensors = JSON.parse(e.data);
+      renderSensors(sensors);
+    } catch (_) {}
+  });
+
+  es.addEventListener('sensor', (e) => {
+    // Single sensor update — refetch the full list to pick up label/night_allowed from config.
+    fetchSensors();
+  });
+
+  es.addEventListener('status', (e) => {
+    try {
+      const d = JSON.parse(e.data);
+      applyStatus(d);
+    } catch (_) {}
+  });
+
+  es.onerror = () => {
+    // EventSource retries automatically. Nothing to do.
+  };
+}
+
+// applyAlarmSnapshot updates the UI from a snapshot (same shape as /api/alarm).
+function applyAlarmSnapshot(d) {
+  const label = document.getElementById('alarm-state-label');
+  const card = document.getElementById('alarm-status-card');
+  const detail = document.getElementById('alarm-state-detail');
+  if (!label) return;
+  label.textContent = alarmLabels[d.state] || d.state;
+  label.style.color = alarmColors[d.state] || 'var(--text)';
+  card.style.borderColor = alarmColors[d.state] || 'var(--border)';
+
+  let details = '';
+  if (d.timer_remaining > 0) {
+    if (d.state === 'arming') {
+      details = `Départ dans ${d.timer_remaining}s`;
+    } else if (d.state === 'pending') {
+      details = `Sirène dans ${d.timer_remaining}s — désarmez pour annuler`;
+    } else if (d.state === 'triggered') {
+      const mins = Math.ceil(d.timer_remaining / 60);
+      details = `Sirène active — arrêt automatique dans ${mins} min`;
+    }
+  }
+  if (d.triggered_by && (d.state === 'pending' || d.state === 'triggered')) {
+    details += (details ? ' · ' : '') + `Déclenché par capteur #${d.triggered_by}`;
+  }
+  if (detail) detail.textContent = details;
+}
+
+// applyStatus updates the status bar (uptime, mqtt, sensor count).
+function applyStatus(d) {
+  const dot = document.getElementById('mqtt-dot');
+  const status = document.getElementById('mqtt-status');
+  const uptime = document.getElementById('uptime');
+  const count = document.getElementById('sensor-count');
+  if (dot) dot.className = 'status-dot ' + (d.mqtt_connected ? 'on' : 'off');
+  if (status) status.textContent = d.mqtt_connected ? 'connecté' : 'déconnecté';
+  if (uptime) uptime.textContent = formatUptime(d.uptime);
+  if (count) count.textContent = d.sensor_count;
+}
+
+// renderSensors rebuilds the sensors list from an array (extracted from fetchSensors).
+function renderSensors(sensors) {
+  const list = document.getElementById('sensors-list');
+  if (!list) return;
+  if (!sensors || sensors.length === 0) {
+    list.innerHTML = '<div class="empty">Aucun capteur appairé</div>';
+    return;
+  }
+  // Two distinct UIs:
+  // - charmux + standalone: legacy night_allowed (sensor ignored in night)
+  // - fbxhome: per-sensor day_alarm / night_alarm / day_timed / night_timed
+  //   (writes propagate to fbxhome ExportLink immediately)
+  const standalone = (window.currentAlarmMode || 'standalone') === 'standalone';
+  const fbxhome = (window.currentCameraMode || 'fbxhome') === 'fbxhome';
+  list.innerHTML = sensors.map(s => {
+    const isSensor = s.type !== 'KPD' && s.type !== 'SRN';
+    const showNightAllowed = !fbxhome && standalone && isSensor;
+    const showFbxFlags = fbxhome && isSensor;
+    const nightChecked = s.night_allowed ? 'checked' : '';
+    // *bool from backend: undefined = inherit fbxhome default (true). Treat
+    // missing or true as checked.
+    const dAlarm = s.day_alarm !== false ? 'checked' : '';
+    const nAlarm = s.night_alarm !== false ? 'checked' : '';
+    const dTimed = s.day_timed !== false ? 'checked' : '';
+    const nTimed = s.night_timed !== false ? 'checked' : '';
+    return `
+      <div class="card">
+        <div class="sensor-row">
+          <span class="sensor-icon">${sensorIcon(s.type)}</span>
+          <div style="flex:1">
+            <div class="card-header">
+              <span class="card-title">${s.label || (s.type + ' #' + s.id)}</span>
+              <div style="display:flex;align-items:center;gap:8px">
+                <span class="sensor-state ${sensorStateClass(s)}">${sensorStateLabel(s)}</span>
+                ${s.type === 'SRN' ? `<button class="btn-icon" onclick="testSiren()" title="Test sirène">🔔</button>` : ''}
+                <button class="btn-icon" onclick="renameSensor(${s.id}, '${(s.label||'').replace(/'/g,"\\'")}')" title="Renommer">✏️</button>
+                <button class="btn-icon" onclick="deleteSensor(${s.id})" title="Supprimer">🗑️</button>
+              </div>
+            </div>
+            <div class="card-meta">
+              ${s.battery > 0 ? `<span>Batterie: ${s.battery}%</span>` : ''}
+              ${s.temperature > 0 ? `<span>Température: ${(s.temperature / 10).toFixed(1)}°C</span>` : ''}
+              <span>${s.reachable ? 'Joignable' : 'Injoignable'}</span>
+            </div>
+            ${showNightAllowed ? `
+            <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);display:flex;align-items:center;gap:8px;font-size:13px">
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="Si coché, ce capteur ne déclenche pas l'alarme en mode Nuit">
+                <input type="checkbox" ${nightChecked} onchange="setNightAllowed(${s.id}, this.checked)">
+                <span>🌙 Autoriser en mode nuit</span>
+              </label>
+            </div>` : ''}
+            ${showFbxFlags ? `
+            <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:13px">
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="Déclenche l'alarme en mode Jour (armed_away)">
+                <input type="checkbox" ${dAlarm} onchange="setSensorFlag(${s.id}, 'day_alarm', this.checked)">
+                <span>☀️ Alarme Jour</span>
+              </label>
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="Déclenche l'alarme en mode Nuit (armed_night)">
+                <input type="checkbox" ${nAlarm} onchange="setSensorFlag(${s.id}, 'night_alarm', this.checked)">
+                <span>🌙 Alarme Nuit</span>
+              </label>
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="Applique le délai d'entrée/sortie en mode Jour (sinon instantané)">
+                <input type="checkbox" ${dTimed} onchange="setSensorFlag(${s.id}, 'day_timed', this.checked)">
+                <span>⏱ Délai Jour</span>
+              </label>
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="Applique le délai d'entrée/sortie en mode Nuit">
+                <input type="checkbox" ${nTimed} onchange="setSensorFlag(${s.id}, 'night_timed', this.checked)">
+                <span>⏱ Délai Nuit</span>
+              </label>
+            </div>` : ''}
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+startEventStream();
+</script>
+</body>
+</html>

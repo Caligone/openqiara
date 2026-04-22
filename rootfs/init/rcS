@@ -1,0 +1,124 @@
+#!/bin/sh
+# OpenQiara custom init script
+set -e
+
+echo "=== OpenQiara Boot ==="
+
+# Mount essentials
+mount -o remount,ro /
+mount -t proc none /proc
+mount -t sysfs none /sys
+mount -t devtmpfs none /dev
+mkdir -p /dev/pts
+mount -t devpts none /dev/pts
+mount -t tmpfs none /tmp -o size=16M,nosuid,noexec
+mount -t tmpfs none /var/log -o size=10M
+mount -t tmpfs none /run
+
+# Mount data partitions
+mount /dev/mmcblk0p2 /data
+mount /dev/mmcblk0p3 /media
+
+# Hostname
+hostname openqiara
+
+# Network loopback
+ifconfig lo 127.0.0.1 netmask 255.255.255.0
+
+# Load camera modules
+echo "Loading camera modules..."
+for mod in mhal mi_common mi_sys mi_sensor mi_mipitx mi_rgn mi_ai mi_ipu mi_ldc mi_vpe mi_shadow mi_gyro mi_ao mi_vif mi_divp mi_panel mi_disp mi_venc mi_vdisp; do
+    insmod /lib/modules/4.9.84/kernel/drivers/sstar/${mod}.ko 2>/dev/null || true
+done
+
+# Camera poll device
+major=$(cat /proc/devices | awk '$2=="mi_poll" {print $1}')
+[ -n "$major" ] && mknod /dev/mi_poll c $major 0
+
+# ISP module
+insmod /lib/modules/4.9.84/kernel/drivers/sstar/sc2x3A_AE.ko chmap=1 2>/dev/null || true
+
+# WiFi module
+echo "Loading WiFi..."
+echo 11 > /sys/class/gpio/export 2>/dev/null || true
+echo out > /sys/class/gpio/gpio11/direction 2>/dev/null || true
+echo 0 > /sys/class/gpio/gpio11/value
+sleep 0.5
+echo 1 > /sys/class/gpio/gpio11/value
+sleep 0.5
+insmod /lib/modules/4.9.84/kernel/drivers/net/wireless/ssv6200/ssv6x5x.ko stacfgpath=/etc/ssv6x5x-wifi.cfg 2>/dev/null || true
+
+# Disable IPv6 on WiFi
+echo 1 > /proc/sys/net/ipv6/conf/ssv0/disable_ipv6 2>/dev/null || true
+
+# Flash MCU firmware
+echo "Flashing MCU..."
+for n in $(seq 1 10); do
+    uartboot -d /dev/ttyS2 -r 2>/dev/null && break
+done
+
+# Generate SSH keys
+echo "Starting SSH..."
+mkdir -p /tmp/dropbear
+for t in ecdsa ed25519 rsa; do
+    dropbearkey -t $t -f /tmp/dropbear/dropbear_${t}_host_key 2>/dev/null || true
+done
+dropbear -B -r /tmp/dropbear/dropbear_ecdsa_host_key -r /tmp/dropbear/dropbear_ed25519_host_key -r /tmp/dropbear/dropbear_rsa_host_key
+
+# Authorized keys
+mkdir -p /root/.ssh
+chmod 700 /root/.ssh
+[ -f /data/ssh_authorized_keys ] && cp /data/ssh_authorized_keys /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys
+
+# WiFi connection
+echo "Connecting WiFi..."
+SSID=$(cat /data/wifi_ssid 2>/dev/null)
+PASS=$(cat /data/wifi_pass 2>/dev/null)
+if [ -n "$SSID" ]; then
+    # Use wpa_supplicant if available, otherwise ssv driver built-in
+    if [ -x /usr/sbin/wpa_supplicant ]; then
+        cat > /tmp/wpa.conf << WPA
+network={
+    ssid="$SSID"
+    psk="$PASS"
+}
+WPA
+        wpa_supplicant -i ssv0 -c /tmp/wpa.conf -B 2>/dev/null
+    fi
+    ifconfig ssv0 up 2>/dev/null
+    udhcpc -i ssv0 -b -q 2>/dev/null &
+fi
+
+# Firewall — allow SSH + web + SRT
+iptables -P INPUT DROP 2>/dev/null || true
+iptables -A INPUT -i lo -j ACCEPT 2>/dev/null || true
+iptables -A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
+iptables -A INPUT -p icmp -j ACCEPT 2>/dev/null || true
+iptables -A INPUT -p tcp --dport 22 -j ACCEPT 2>/dev/null || true
+iptables -A INPUT -p tcp --dport 80 -j ACCEPT 2>/dev/null || true
+iptables -A INPUT -p tcp --dport 8080 -j ACCEPT 2>/dev/null || true
+iptables -A INPUT -p udp --dport 9000 -j ACCEPT 2>/dev/null || true
+
+# Start charmux (MCU serial mux)
+echo "Starting charmux..."
+charmux -d /dev/ttyS2 -l /tmp/ttyEZR -t 4 -r \
+    -u 0,127.0.0.1,8001,127.0.0.1,8000 \
+    -u 1,127.0.0.1,8003,127.0.0.1,8002 \
+    -u 3,127.0.0.1,8005,127.0.0.1,8004 \
+    -u 2,127.0.0.1,8007,127.0.0.1,8006 \
+    -H 0 &
+
+sleep 2
+
+# Start video pipeline
+echo "Starting video..."
+mkdir -p /tmp/out_stream/stream/360p /tmp/out_stream/stream/720p /tmp/out_stream/stream/1080p
+hlcamd --use-h265 &
+sleep 1
+hls -p /tmp/out_stream/stream/720p -r 720 --use-h265 &
+
+# Start OpenQiara daemon
+echo "Starting openqiarad..."
+/data/openqiarad -config /data/openqiara.json -poll 2s -web :8080 >> /data/openqiarad.log 2>&1 &
+
+echo "=== OpenQiara Ready ==="
