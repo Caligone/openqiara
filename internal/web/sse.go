@@ -40,16 +40,17 @@ func newSSEHub() *sseHub {
 
 // Publish sends an event to all subscribed clients. Non-blocking: if a client's
 // buffer is full, the event is dropped for that client (slow consumer).
+//
+// Le lock est tenu pendant le send aux clients : Unsubscribe ne peut pas
+// close un channel qu'on est en train d'écrire. Les sends étant
+// non-bloquants (select + default), tenir le lock n'introduit pas de
+// risque de deadlock, et Publish est suffisamment peu fréquent pour que
+// la contention reste négligeable.
 func (h *sseHub) Publish(ev sseEvent) {
 	h.mu.Lock()
+	defer h.mu.Unlock()
 	h.lastByType[ev.Type] = ev
-	clients := make([]chan sseEvent, 0, len(h.clients))
 	for ch := range h.clients {
-		clients = append(clients, ch)
-	}
-	h.mu.Unlock()
-
-	for _, ch := range clients {
 		select {
 		case ch <- ev:
 		default:

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -120,13 +121,26 @@ func main() {
 
 	// Publishers (MQTT and/or HomeKit)
 	var pubs []publisher.Publisher
-	alarmState := "disarmed"
+
+	// alarmState est lu/écrit par 5 goroutines (handlers MQTT, alarm engine,
+	// SSE callback, alarmo subscribe). atomic.Pointer évite la data race
+	// constatée par -race avant 2026-05-15. Helpers définis pour ne pas
+	// répéter le boilerplate Load()/Store() partout.
+	var alarmStateBox atomic.Pointer[string]
+	setAlarmState := func(s string) { alarmStateBox.Store(&s) }
+	getAlarmState := func() string {
+		if p := alarmStateBox.Load(); p != nil {
+			return *p
+		}
+		return ""
+	}
+	setAlarmState("disarmed")
 
 	// Command handler shared by all publishers
 	cmds := &publisher.CommandHandler{
 		OnAlarmCommand: func(state string) {
 			logger.Info("alarm command", "state", state)
-			alarmState = state
+			setAlarmState(state)
 			webSrvSetAlarm(state, pubs, ctx, logger)
 		},
 		OnShutterCommand: func(open bool) {
@@ -273,7 +287,7 @@ func main() {
 			}
 		},
 		OnAlarmStateChanged: func(ctx context.Context, state string) error {
-			alarmState = state
+			setAlarmState(state)
 			for _, p := range pubs {
 				if err := p.PublishAlarmState(ctx, state); err != nil {
 					logger.Warn("publish alarm state failed", "error", err)
@@ -415,7 +429,7 @@ func main() {
 
 	alarmStateCallback := func(snap alarm.Snapshot) {
 		logger.Info("alarm state", "state", snap.State, "prev", snap.PreviousState, "trigger", snap.TriggeredBy, "remaining", snap.TimerRemaining)
-		alarmState = string(snap.State)
+		setAlarmState(string(snap.State))
 		handleSirenForAlarmState(string(snap.State), string(snap.PreviousState))
 		if webSrv == nil {
 			for _, p := range pubs {
@@ -454,7 +468,7 @@ func main() {
 			webSrv.SetAlarmState(string(alarmEngine.Snapshot().State))
 		}
 		initSnap := alarmEngine.Snapshot()
-		alarmState = string(initSnap.State)
+		setAlarmState(string(initSnap.State))
 		logger.Info("alarm engine started", "state", initSnap.State)
 	} else {
 		logger.Info("alarm engine skipped (alarmo mode — HA Alarmo is the source of truth)")
@@ -527,7 +541,7 @@ func main() {
 				return
 			}
 			state := string(payload)
-			prev := alarmState
+			prev := getAlarmState()
 			logger.Info("alarmo state received", "state", state, "prev", prev)
 			if webSrv != nil {
 				webSrv.SetAlarmState(state)
@@ -538,7 +552,7 @@ func main() {
 			}
 			// Pilotage sirène physique sur les transitions alarmo.
 			handleSirenForAlarmState(state, prev)
-			alarmState = state
+			setAlarmState(state)
 		})
 		logger.Info("subscribed to alarmo state", "topic", alarmoStateTopic)
 	}
@@ -585,7 +599,6 @@ func main() {
 		}
 	}()
 
-	_ = alarmState
 	// In fbxhome mode the camera client polls /api/v1/home/endpoints_read
 	// on a fixed interval and emits SensorEvents on state changes. In
 	// charmux mode the cam.StartPolling is a no-op (charmux pushes events
