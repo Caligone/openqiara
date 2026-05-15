@@ -23,8 +23,6 @@ import (
 // 3640 calls the "access unit"). If the input doesn't start with an
 // ADTS sync word (0xFFF), it's returned unchanged.
 //
-//nolint:unused // groundwork for future AAC-ELD transcoding via libfdk-aac
-//
 // ADTS layout (7 bytes):
 //
 //	0xFF 0xF1 ...   sync (12 bits) + ID + layer + protection_absent
@@ -34,6 +32,8 @@ import (
 // We don't need to parse the profile/rate/channels here; the HomeKit
 // session config tells iOS what to expect. We only need to find the
 // raw AAC bytes.
+//
+//lint:ignore U1000 groundwork for future AAC-ELD transcoding via libfdk-aac
 func stripADTS(frame []byte) []byte {
 	if len(frame) < 7 {
 		return frame
@@ -54,7 +54,7 @@ func stripADTS(frame []byte) []byte {
 // ADTS frames (which is how MPEG-TS audio PES often packs them) and
 // returns each raw AAC payload separately, with ADTS headers stripped.
 //
-//nolint:unused // groundwork for future AAC-ELD transcoding via libfdk-aac
+//lint:ignore U1000 groundwork for future AAC-ELD transcoding via libfdk-aac
 func splitADTSFrames(buf []byte) [][]byte {
 	var out [][]byte
 	for off := 0; off+7 <= len(buf); {

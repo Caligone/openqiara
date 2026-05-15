@@ -11,7 +11,7 @@ import (
 // sseEvent is a single server-sent event broadcast to connected clients.
 type sseEvent struct {
 	Type string      `json:"type"` // "alarm", "sensors", "status"
-	Data interface{} `json:"data"`
+	Data any `json:"data"`
 }
 
 // sseHub is the fan-out for server-sent events. Sources push events into it,
@@ -137,7 +137,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 // PublishEvent is a public method for other goroutines to inject events into the hub.
 // Used by main.go callbacks (alarm engine, camera events).
-func (s *Server) PublishEvent(eventType string, data interface{}) {
+func (s *Server) PublishEvent(eventType string, data any) {
 	if s.hub == nil {
 		return
 	}
