@@ -86,9 +86,25 @@ sleep 2
 EUPID=$(cat /tmp/key.eupid 2>/dev/null || echo "0000000000000000")
 nohup /usr/bin/fbxhome -A /dev/ttyS2 -C /data/fbxhome.xml -e "$EUPID" -U 1 \
     >> /data/fbxhome.log 2>&1 &
-# Stop dnsmasq — it binds port 5353 which blocks HomeKit mDNS
+# Stop dnsmasq vendor, then start our own with two key tweaks:
+#
+# 1. Bind to :53 only (NOT :5353): the stock dnsmasq grabs :5353 too, which
+#    collides with our HomeKit mDNS responder.
+# 2. Force *.srv.home-labs.fr → 127.0.0.1 and ::1 (loopback) instead of
+#    routing to the now-dead Free cloud over IPv6. Without this, the
+#    vendor daemon `hl_event_collectd` POSTs sensor events / IV detection
+#    notifications to the cloud and they vanish — openqiarad never sees
+#    them. With it, those POSTs land on our /events and /notifications
+#    handlers and feed the IV → MQTT pipeline.
 fbxupstartctl stop dnsmasq 2>/dev/null
 killall dnsmasq 2>/dev/null
+sleep 2
+nohup dnsmasq \
+    -S /x.home-labs.fr/fd6d:7972:6961:1:: \
+    --address=/srv.home-labs.fr/127.0.0.1 \
+    --address=/srv.home-labs.fr/::1 \
+    -S 8.8.8.8 \
+    -d >> /data/dnsmasq.log 2>&1 &
 sleep 3
 
 # Activate IntelliVision (human/pet detection) by pre-populating the
