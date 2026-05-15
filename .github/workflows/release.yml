@@ -1,0 +1,50 @@
+name: Release
+
+# Déclenchement manuel via `git push origin v*`. Pas de release sur les
+# commits normaux — c'est volontaire pour garder un contrôle explicite
+# sur le versioning (cf. README et project_github_releases.md).
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+
+      - name: Build daemon (linux/arm7)
+        run: |
+          GIT_COMMIT=$(git rev-parse --short HEAD)
+          BUILD_DATE=$(date -u +%Y-%m-%d)
+          GOOS=linux GOARCH=arm GOARM=7 go build \
+            -trimpath \
+            -ldflags="-s -w -X main.version=${GITHUB_REF_NAME} -X main.commit=${GIT_COMMIT} -X main.date=${BUILD_DATE}" \
+            -o openqiarad-linux-arm7 \
+            ./cmd/openqiarad
+
+      - name: Strip + smoke test
+        run: |
+          ls -la openqiarad-linux-arm7
+          file openqiarad-linux-arm7
+
+      - name: SHA256 checksums
+        run: sha256sum openqiarad-linux-arm7 scripts/sd_setup.sh scripts/patch_fbxhome.sh > SHA256SUMS
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            openqiarad-linux-arm7
+            scripts/sd_setup.sh
+            scripts/patch_fbxhome.sh
+            SHA256SUMS
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-alpha') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-rc') }}

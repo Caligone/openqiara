@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -23,6 +24,30 @@ import (
 	staticweb "github.com/caligone/openqiara/web"
 )
 
+// Build-time variables injected via -ldflags. Stay as "dev" / "" when
+// building locally without the release workflow.
+//
+//	go build -ldflags="-X main.version=v0.1.0-alpha.1 -X main.commit=abc1234 -X main.date=2026-05-15"
+var (
+	version = "dev"
+	commit  = ""
+	date    = ""
+)
+
+// BuildInfo returns the version string shown in /api/status and the
+// -version output. Always non-empty.
+func BuildInfo() string {
+	s := version
+	if commit != "" {
+		s += " (" + commit
+		if date != "" {
+			s += ", " + date
+		}
+		s += ")"
+	}
+	return s
+}
+
 func main() {
 	configPath := flag.String("config", "/data/openqiara.json", "path to config file")
 	// poll : intervalle de sécurité. Les events temps réel arrivent désormais
@@ -37,11 +62,17 @@ func main() {
 	webAddr := flag.String("web", ":80", "web UI listen address")
 	mode := flag.String("mode", "auto", "backend mode: fbxhome, charmux, or auto")
 	debugAPI := flag.Bool("debug", false, "enable /api/debug/* endpoints (PKT raw, siren raw — can brick the MCU)")
+	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Println(BuildInfo())
+		os.Exit(0)
+	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(logger)
-	logger.Info("openqiarad starting", "config", *configPath, "poll_interval", *pollInterval, "mode", *mode)
+	logger.Info("openqiarad starting", "version", BuildInfo(), "config", *configPath, "poll_interval", *pollInterval, "mode", *mode)
 
 	store := config.NewStore(*configPath)
 	if err := store.Load(); err != nil {
@@ -254,6 +285,7 @@ func main() {
 	var webSrv *web.Server
 	if cfg.WebEnabled() {
 		webSrv = web.NewServer(cam, store, func() bool { return mqttConnected }, mqttCB, staticweb.StaticFiles, logger)
+		webSrv.SetVersion(BuildInfo())
 		if *debugAPI {
 			webSrv.EnableDebugEndpoints()
 			logger.Warn("debug API endpoints enabled — DO NOT use in production")

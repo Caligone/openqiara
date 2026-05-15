@@ -84,6 +84,7 @@ type Server struct {
 	log          *slog.Logger
 	srv          *http.Server
 	staticFS     fs.FS
+	version      string // build info string ; empty = unknown
 
 	alarmMu    sync.RWMutex
 	alarmState string // fallback when no alarm provider is attached
@@ -186,6 +187,12 @@ func (s *Server) SetHLEventsDispatcher(d *hlevents.Dispatcher) {
 // requêtes GET /stream/ ne tentent aucun resume.
 func (s *Server) SetHlcamdResumer(h *camera.HlcamdResumer) {
 	s.hlcamd = h
+}
+
+// SetVersion sets the build version exposed in /api/status. Called from
+// main.go with BuildInfo() — empty string is acceptable (= unknown).
+func (s *Server) SetVersion(v string) {
+	s.version = v
 }
 
 // SetAlarmState updates the alarm state from an external source (e.g. KPD event).
@@ -323,6 +330,7 @@ func (s *Server) buildStatus() map[string]any {
 		"mqtt_connected": s.mqttOK != nil && s.mqttOK(),
 		"sensor_count":   count,
 		"uptime":         int(time.Since(s.startTime).Seconds()),
+		"version":        s.version,
 	}
 }
 
@@ -439,6 +447,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"uptime":         int(time.Since(s.startTime).Seconds()),
 		"mqtt_connected": s.mqttOK(),
 		"sensor_count":   sensorCount,
+		"version":        s.version,
 	})
 }
 

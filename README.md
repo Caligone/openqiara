@@ -123,8 +123,7 @@ mort — pas des bugs à corriger en bidouillant `openqiarad`.
 
 ## Démarrage rapide
 
-**Prérequis :** macOS avec [Go 1.26+](https://go.dev/dl/) et
-[Homebrew](https://brew.sh). Un réseau WiFi 2.4 GHz.
+**Prérequis :** macOS avec [Homebrew](https://brew.sh) et un réseau WiFi 2.4 GHz.
 
 ### 1. Sauvegarde de la carte SD
 
@@ -146,28 +145,41 @@ sudo dd if=/dev/r${DISK}s3 bs=1M of=backup_media.img
 
 Garde ces fichiers en lieu sûr — c'est ton billet retour si quelque chose tourne mal.
 
-### 2. Build et installation
+### 2. Télécharger les artefacts
+
+Depuis la [dernière release](https://github.com/Caligone/openqiara/releases/latest) :
 
 ```bash
-git clone https://github.com/Caligone/openqiara
-cd openqiara
+mkdir -p openqiara && cd openqiara
 
-# Installer les dépendances
+# Binaire daemon (ARMv7) + scripts d'install
+curl -LO https://github.com/Caligone/openqiara/releases/latest/download/openqiarad-linux-arm7
+curl -LO https://github.com/Caligone/openqiara/releases/latest/download/sd_setup.sh
+curl -LO https://github.com/Caligone/openqiara/releases/latest/download/patch_fbxhome.sh
+curl -LO https://github.com/Caligone/openqiara/releases/latest/download/SHA256SUMS
+
+# Vérification d'intégrité
+shasum -a 256 -c SHA256SUMS
+
+chmod +x sd_setup.sh patch_fbxhome.sh
+```
+
+Si tu préfères compiler toi-même, voir la section [Compilation](#compilation) plus bas.
+
+### 3. Préparer la carte SD
+
+```bash
 brew install e2fsprogs
 
-# Compiler le daemon pour la caméra (ARMv7)
-GOOS=linux GOARCH=arm GOARM=7 go build -trimpath -ldflags="-s -w" \
-    -o bin/openqiarad ./cmd/openqiarad
-
-# Préparer la carte SD
-./scripts/sd_setup.sh \
+./sd_setup.sh \
     --disk disk4 \
     --wifi-ssid "MonReseau" \
     --wifi-pass "MonMotDePasse" \
+    --daemon openqiarad-linux-arm7 \
     --ssh-pubkey ~/.ssh/id_ed25519.pub
 ```
 
-### 3. Démarrage
+### 4. Démarrage
 
 Réinsère la SD dans la caméra, allume-la, et attends ~60 secondes.
 Trouve la caméra sur le réseau :
@@ -176,12 +188,34 @@ Trouve la caméra sur le réseau :
 arp -a | grep lwip
 ```
 
+### 5. Patcher fbxhome (recommandé)
+
+Pour qu'OpenQiara pilote l'alarme sans interférence du démon vendor (cf
+[`docs/protocol.md` §11](docs/protocol.md)), patche `fbxhome` sur la cam :
+
+```bash
+scp -i ~/.ssh/id_ed25519 patch_fbxhome.sh root@<ip-cam>:/tmp/
+ssh -i ~/.ssh/id_ed25519 root@<ip-cam> 'sh /tmp/patch_fbxhome.sh'
+ssh -i ~/.ssh/id_ed25519 root@<ip-cam> reboot
+```
+
+Le script vérifie le MD5 du binaire vendor avant d'appliquer le patch ; il
+abandonne proprement si la version installée n'est pas celle qu'on connaît
+(évite de corrompre un firmware imprévu).
+
+### 6. Configuration
+
 Ouvre `http://openqiara.local` (ou l'IP de la caméra) pour appairer les
 capteurs et configurer MQTT.
 
 ## Compilation
 
+Si tu préfères builder toi-même plutôt que d'utiliser une release :
+
 ```bash
+git clone https://github.com/Caligone/openqiara
+cd openqiara
+
 # Cross-compile le daemon pour la caméra (ARMv7)
 GOOS=linux GOARCH=arm GOARM=7 go build -trimpath -ldflags="-s -w" \
     -o bin/openqiarad ./cmd/openqiarad
@@ -189,6 +223,8 @@ GOOS=linux GOARCH=arm GOARM=7 go build -trimpath -ldflags="-s -w" \
 # Tests (à lancer sur ta machine de dev)
 go test ./...
 ```
+
+**Prérequis** : [Go 1.26+](https://go.dev/dl/).
 
 ## Documentation
 
