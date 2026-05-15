@@ -231,10 +231,13 @@ a { color: var(--primary); }
           <label>Délai de pré-alarme (s) <span style="color:var(--text-muted);font-size:12px">temps après détection avant que la sirène se déclenche</span></label>
           <input type="number" id="cfg-pending-delay" min="0" max="600" step="1">
         </div>
-        <div class="form-group">
-          <label>Durée du wail (s) <span style="color:var(--text-muted);font-size:12px">durée du burst d'alarme avant arrêt</span></label>
-          <input type="number" id="cfg-wail-duration" min="1" max="60" step="1">
-        </div>
+      </div>
+      <!-- Wail duration : utilisé par notre TriggerSirenAlarm dans tous
+           les modes (standalone ET alarmo, peu importe le backend). On
+           le sort des deux blocs timings spécifiques au mode. -->
+      <div class="form-group">
+        <label>Durée du wail (s) <span style="color:var(--text-muted);font-size:12px">durée du burst d'alarme avant arrêt</span></label>
+        <input type="number" id="cfg-wail-duration" min="1" max="60" step="1">
       </div>
       <div id="cfg-fbxhome-timings" style="display:none">
         <div class="form-group">
@@ -817,10 +820,13 @@ async function loadConfig() {
     const charmuxTimings = document.getElementById('cfg-charmux-timings');
     const fbxTimings = document.getElementById('cfg-fbxhome-timings');
     if (charmuxTimings && fbxTimings) {
+      // alarmo = HA Alarmo pilote l'alarme : ni les délais engine local,
+      // ni les timeouts fbxhome n'ont d'effet. On masque les deux.
+      // En standalone : délais de l'engine local Go.
+      // En alarmo non-supporté ici : ni l'un ni l'autre.
       const showLocal = alarmMode === 'standalone';
-      const showFbx = !showLocal && camMode === 'fbxhome';
       charmuxTimings.style.display = showLocal ? '' : 'none';
-      fbxTimings.style.display = showFbx ? '' : 'none';
+      fbxTimings.style.display = 'none';
     }
     // Load fbxhome timings on-demand (separate endpoint reading the XML).
     if (camMode === 'fbxhome') {
@@ -841,23 +847,24 @@ async function loadConfig() {
   } catch (e) { /* ignore */ }
 }
 
-// Toggle Alarmo topics + timings blocs en fonction du mode d'alarme choisi.
+// Toggle Alarmo topics + timings blocs + sensor cards en fonction du
+// mode d'alarme choisi. En mode alarmo, HA Alarmo est la source de
+// vérité — les délais et flags par capteur n'ont aucun effet.
 document.addEventListener('DOMContentLoaded', () => {
   const modeSel = document.getElementById('cfg-alarm-mode');
   if (modeSel) {
     modeSel.addEventListener('change', () => {
       const m = modeSel.value;
       document.getElementById('cfg-alarmo-topics').style.display = m === 'alarmo' ? '' : 'none';
-      // Sync l'affichage des blocs de timings : standalone = délais engine
-      // local, alarmo = délais fbxhome (si mode camera=fbxhome).
       window.currentAlarmMode = m;
-      const camMode = window.currentCameraMode || 'fbxhome';
       const showLocal = m === 'standalone';
-      const showFbx = !showLocal && camMode === 'fbxhome';
       const cTim = document.getElementById('cfg-charmux-timings');
       const fTim = document.getElementById('cfg-fbxhome-timings');
       if (cTim) cTim.style.display = showLocal ? '' : 'none';
-      if (fTim) fTim.style.display = showFbx ? '' : 'none';
+      if (fTim) fTim.style.display = 'none';
+      // Re-render la liste des capteurs si elle est déjà affichée
+      // (les flags par capteur dépendent du mode).
+      if (window.lastSensors) renderSensors(window.lastSensors);
     });
   }
 
@@ -1151,16 +1158,24 @@ function renderSensors(sensors) {
     list.innerHTML = '<div class="empty">Aucun capteur appairé</div>';
     return;
   }
-  // Two distinct UIs:
-  // - charmux + standalone: legacy night_allowed (sensor ignored in night)
-  // - fbxhome: per-sensor day_alarm / night_alarm / day_timed / night_timed
-  //   (writes propagate to fbxhome ExportLink immediately)
+  // Mémoriser la dernière liste pour permettre un re-render après
+  // changement de mode alarme (les flags par capteur disparaissent
+  // en mode alarmo).
+  window.lastSensors = sensors;
+  // En mode alarmo, HA Alarmo décide quels capteurs déclenchent quoi
+  // — nos flags par capteur (day_alarm, night_allowed, etc.) sont
+  // décoratifs au mieux. On les masque pour ne pas laisser croire
+  // qu'ils ont un effet.
+  // En mode standalone :
+  //   - charmux : legacy night_allowed (capteur ignoré en mode nuit)
+  //   - fbxhome : day_alarm / night_alarm / day_timed / night_timed
+  //     (poussés à fbxhome via ExportLink)
   const standalone = (window.currentAlarmMode || 'standalone') === 'standalone';
   const fbxhome = (window.currentCameraMode || 'fbxhome') === 'fbxhome';
   list.innerHTML = sensors.map(s => {
     const isSensor = s.type !== 'KPD' && s.type !== 'SRN';
-    const showNightAllowed = !fbxhome && standalone && isSensor;
-    const showFbxFlags = fbxhome && isSensor;
+    const showNightAllowed = standalone && !fbxhome && isSensor;
+    const showFbxFlags = standalone && fbxhome && isSensor;
     const nightChecked = s.night_allowed ? 'checked' : '';
     // *bool from backend: undefined = inherit fbxhome default (true). Treat
     // missing or true as checked.
