@@ -86,7 +86,16 @@ a { color: var(--primary); }
     <span><span class="status-dot" id="mqtt-dot"></span>MQTT: <span id="mqtt-status">--</span></span>
     <span>Uptime: <span id="uptime">--</span></span>
     <span>Capteurs: <span id="sensor-count">--</span></span>
+    <span>Version: <span id="version">--</span></span>
   </div>
+</div>
+
+<!-- Bannière update : affichée seulement si une nouvelle version est dispo -->
+<div id="update-banner" style="display:none;padding:10px 16px;background:#1f3a52;color:#cde;border-bottom:1px solid #2a4a66;font-size:13px">
+  <span>Nouvelle version <strong id="update-version">--</strong> disponible.</span>
+  <button onclick="installUpdate()" id="update-install-btn" style="margin-left:12px;padding:4px 10px;background:#2a6cb0;color:white;border:none;border-radius:4px;cursor:pointer;font-size:13px">Installer</button>
+  <span id="update-progress" style="margin-left:12px;color:#9ab"></span>
+  <a id="update-notes-link" href="#" target="_blank" style="margin-left:12px;color:#9cf;font-size:12px">notes →</a>
 </div>
 
 <div class="container">
@@ -851,6 +860,9 @@ document.addEventListener('DOMContentLoaded', () => {
       if (fTim) fTim.style.display = showFbx ? '' : 'none';
     });
   }
+
+  // Check OTA update au chargement (lazy, cache 1h server-side).
+  checkForUpdate();
 });
 
 // Toggle avancé
@@ -1042,10 +1054,93 @@ function applyStatus(d) {
   const status = document.getElementById('mqtt-status');
   const uptime = document.getElementById('uptime');
   const count = document.getElementById('sensor-count');
+  const ver = document.getElementById('version');
   if (dot) dot.className = 'status-dot ' + (d.mqtt_connected ? 'on' : 'off');
   if (status) status.textContent = d.mqtt_connected ? 'connecté' : 'déconnecté';
   if (uptime) uptime.textContent = formatUptime(d.uptime);
   if (count) count.textContent = d.sensor_count;
+  if (ver) ver.textContent = d.version || '--';
+}
+
+// --- OTA update banner ---
+//
+// On check au chargement de la page. Si une update est dispo, on affiche
+// le banner. Le bouton "Installer" déclenche /api/update/install puis
+// poll /api/update/status. Pendant le swap on désactive le bouton et on
+// affiche le progress ; au StepDone l'UI va perdre la connexion (le
+// daemon SIGTERM lui-même), on affiche un message d'attente.
+async function checkForUpdate() {
+  try {
+    const r = await fetch('/api/update/check');
+    if (!r.ok) return; // 503 = pas configuré, silencieux
+    const d = await r.json();
+    if (!d.update_needed) return;
+    document.getElementById('update-version').textContent = d.latest.tag_name || '?';
+    const link = document.getElementById('update-notes-link');
+    if (d.latest.html_url) link.href = d.latest.html_url;
+    document.getElementById('update-banner').style.display = 'block';
+  } catch (e) {
+    // Silencieux : pas de réseau, pas grave.
+  }
+}
+
+async function installUpdate() {
+  const btn = document.getElementById('update-install-btn');
+  const progress = document.getElementById('update-progress');
+  if (!confirm('Installer la mise à jour ? L\'interface va se déconnecter pendant ~30 secondes.')) return;
+
+  btn.disabled = true;
+  btn.textContent = 'En cours...';
+  progress.textContent = 'démarrage...';
+
+  try {
+    const r = await fetch('/api/update/install', { method: 'POST' });
+    if (!r.ok) {
+      progress.textContent = 'échec : ' + (await r.text());
+      btn.disabled = false;
+      btn.textContent = 'Installer';
+      return;
+    }
+    // Poll le status toutes les 500ms jusqu'à StepDone ou StepFailed.
+    const poll = async () => {
+      try {
+        const sr = await fetch('/api/update/status');
+        if (!sr.ok) {
+          // Le daemon a probablement redémarré : on attend qu'il revienne.
+          progress.textContent = 'redémarrage en cours...';
+          setTimeout(() => location.reload(), 8000);
+          return;
+        }
+        const s = await sr.json();
+        if (s.step === 'downloading' && s.total_bytes) {
+          progress.textContent = `download ${s.progress}% (${Math.round(s.bytes/1024)}KB / ${Math.round(s.total_bytes/1024)}KB)`;
+        } else {
+          progress.textContent = s.step;
+        }
+        if (s.step === 'failed') {
+          progress.textContent = 'échec : ' + (s.error || 'inconnu');
+          btn.disabled = false;
+          btn.textContent = 'Installer';
+          return;
+        }
+        if (s.step === 'done') {
+          progress.textContent = 'redémarrage en cours...';
+          setTimeout(() => location.reload(), 8000);
+          return;
+        }
+        setTimeout(poll, 500);
+      } catch (e) {
+        // Le daemon est probablement en train de redémarrer (SIGTERM).
+        progress.textContent = 'redémarrage en cours...';
+        setTimeout(() => location.reload(), 8000);
+      }
+    };
+    setTimeout(poll, 500);
+  } catch (e) {
+    progress.textContent = 'erreur réseau : ' + e.message;
+    btn.disabled = false;
+    btn.textContent = 'Installer';
+  }
 }
 
 // renderSensors rebuilds the sensors list from an array (extracted from fetchSensors).

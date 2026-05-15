@@ -20,6 +20,7 @@ import (
 	"github.com/caligone/openqiara/internal/camera"
 	"github.com/caligone/openqiara/internal/config"
 	"github.com/caligone/openqiara/internal/hlevents"
+	"github.com/caligone/openqiara/internal/ota"
 )
 
 // MQTTCallbacks allows the web server to trigger publisher updates on sensor changes.
@@ -115,6 +116,11 @@ type Server struct {
 	// playlist n'est pas écrite depuis >maxAge). nil = pas de healing,
 	// /api/stream/start fait un resume direct par exec.Command.
 	hlcamd *camera.HlcamdResumer
+
+	// ota expose les endpoints /api/update/*. nil = endpoints renvoient
+	// 503 (pas configuré en build local sans -ldflags).
+	otaClient    *ota.Client
+	otaInstaller *ota.Installer
 }
 
 // pendingKPDCodeJob représente une écriture de code PIN en attente que le
@@ -195,6 +201,13 @@ func (s *Server) SetVersion(v string) {
 	s.version = v
 }
 
+// SetOTA attache le client GitHub Releases et l'installer. Si non
+// appelé, les endpoints /api/update/* renvoient 503.
+func (s *Server) SetOTA(client *ota.Client, installer *ota.Installer) {
+	s.otaClient = client
+	s.otaInstaller = installer
+}
+
 // SetAlarmState updates the alarm state from an external source (e.g. KPD event).
 func (s *Server) SetAlarmState(state string) {
 	s.alarmMu.Lock()
@@ -230,6 +243,9 @@ func (s *Server) Start(addr string) error {
 	mux.HandleFunc("POST /api/codes", s.cors(s.handleAddCode))
 	mux.HandleFunc("DELETE /api/codes", s.cors(s.handleDeleteCode))
 	mux.HandleFunc("POST /api/reboot", s.cors(s.handleReboot))
+	mux.HandleFunc("GET /api/update/check", s.cors(s.handleUpdateCheck))
+	mux.HandleFunc("POST /api/update/install", s.cors(s.handleUpdateInstall))
+	mux.HandleFunc("GET /api/update/status", s.cors(s.handleUpdateStatus))
 	mux.HandleFunc("POST /api/siren/test", s.cors(s.handleSirenTest))
 	mux.HandleFunc("POST /api/siren/alarm_test", s.cors(s.handleSirenAlarmTest))
 	mux.HandleFunc("POST /api/stream/start", s.cors(s.handleStartStream))

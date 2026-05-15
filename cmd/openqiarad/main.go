@@ -20,6 +20,7 @@ import (
 	"github.com/caligone/openqiara/internal/hlevents"
 	"github.com/caligone/openqiara/internal/mdns"
 	"github.com/caligone/openqiara/internal/mqtt"
+	"github.com/caligone/openqiara/internal/ota"
 	"github.com/caligone/openqiara/internal/publisher"
 	"github.com/caligone/openqiara/internal/web"
 	staticweb "github.com/caligone/openqiara/web"
@@ -394,6 +395,35 @@ func main() {
 	}
 	if hkPub != nil && hkPub.Camera() != nil {
 		hkPub.Camera().SetHlcamdResumer(hlcamdResumer)
+	}
+
+	// OTA updater — interroge GitHub Releases pour proposer des
+	// updates depuis l'UI.
+	//
+	// onComplete : on délègue le swap final à un script shell détaché
+	// parce que le binaire courant tient /data/openqiarad par inode :
+	// rm ne libère pas l'espace tant qu'on est vivant, et /data est
+	// trop plein pour héberger nouveau + ancien en parallèle. Le script
+	// attend la mort du parent puis copie le binaire staged vers /data
+	// et relance avec les mêmes args.
+	if webSrv != nil {
+		otaClient := ota.NewClient(BuildInfo(), logger)
+		cfg := ota.DefaultInstallConfig()
+		var otaInstaller *ota.Installer
+		otaInstaller = ota.NewInstaller(otaClient, cfg, func() {
+			staged := otaInstaller.Status().StagedAt
+			if staged == "" {
+				logger.Error("OTA onComplete: no staged path — aborting swap")
+				return
+			}
+			if err := launchSwapScript(staged, cfg.TargetPath, os.Args, logger); err != nil {
+				logger.Error("OTA: launch swap script failed", "error", err)
+				return
+			}
+			logger.Info("OTA install complete — handing off to swap script")
+			_ = syscall.Kill(os.Getpid(), syscall.SIGTERM)
+		})
+		webSrv.SetOTA(otaClient, otaInstaller)
 	}
 
 	// Alarm engine — standalone state machine for arm/disarm/triggered logic.
