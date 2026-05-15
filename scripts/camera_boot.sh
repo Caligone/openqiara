@@ -91,6 +91,17 @@ fbxupstartctl stop dnsmasq 2>/dev/null
 killall dnsmasq 2>/dev/null
 sleep 3
 
+# Activate IntelliVision (human/pet detection) by pre-populating the
+# license cache. The original Qiara cloud served this token via the
+# /license endpoint; with Free's shutdown the endpoint returns 400 and
+# IV stays off. The magic license string below is extracted from
+# libivengine.so (fcn 0xa4008) — it's a plain literal hardcoded in the
+# IntelliVision engine, no signature or hash. See memory/feedback_iv_license_endpoint.md
+# for the full RE writeup.
+if [ ! -f /data/iv_license ]; then
+    echo -n '{"result":"b1uy54f9jbHjoEeaGuam8bl7kFbu"}' > /data/iv_license
+fi
+
 # Restart hlcamd in H.264 mode (instead of nominal H.265) so the HLS
 # segments produced in /tmp/out_stream/stream/720p/ contain H.264 NAL
 # units that openqiarad can repackage directly into RTP for HomeKit
