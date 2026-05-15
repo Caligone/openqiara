@@ -15,6 +15,7 @@ import (
 	"github.com/caligone/openqiara/internal/charmux"
 	"github.com/caligone/openqiara/internal/config"
 	"github.com/caligone/openqiara/internal/fbxhomelog"
+	"github.com/caligone/openqiara/internal/hlevents"
 	"github.com/caligone/openqiara/internal/mdns"
 	"github.com/caligone/openqiara/internal/mqtt"
 	"github.com/caligone/openqiara/internal/publisher"
@@ -288,6 +289,48 @@ func main() {
 		}
 	} else {
 		logger.Info("web server disabled in config (headless mode)")
+	}
+
+	// hl_event_collectd → MQTT dispatcher (IntelliVision detections).
+	//
+	// Quand on intercepte les POST /events et /notifications du daemon
+	// vendor `hl_event_collectd` (cf. internal/web/server.go), on récupère
+	// les events IV (human/pet detection) — on les transforme en états
+	// binary_sensor MQTT pour Home Assistant.
+	//
+	// Le dispatcher maintient un état par object_id avec auto-expire après
+	// 30s sans Exit/Lost (au cas où la cam perd l'objet en cours). Le sink
+	// reçoit chaque transition et publie sur MQTT.
+	if webSrv != nil && mqttPub != nil {
+		// Publish discovery une fois (HA va auto-créer les entités).
+		if err := mqttPub.HAPublisher().PublishIVDiscovery(ctx); err != nil {
+			logger.Warn("mqtt: publish IV discovery failed", "error", err)
+		}
+		// État initial false sur les deux topics — sans ça HA garde
+		// "unknown" tant qu'aucune détection de cette classe n'est jamais
+		// arrivée, ce qui est moche dans le dashboard.
+		for _, kind := range []string{"human", "pet"} {
+			if err := mqttPub.HAPublisher().PublishIVDetection(ctx, kind, false, 0, ""); err != nil {
+				logger.Warn("mqtt: publish IV initial state failed", "kind", kind, "error", err)
+			}
+		}
+
+		ivDispatcher := hlevents.NewDispatcher(logger, func(det hlevents.Detection) {
+			kind := "human"
+			if det.Class == hlevents.IVClassPet {
+				kind = "pet"
+			} else if det.Class != hlevents.IVClassHuman {
+				// Classe inconnue (jamais observée en live) : skip.
+				return
+			}
+			if err := mqttPub.HAPublisher().PublishIVDetection(ctx, kind, det.Present, det.Confidence, det.ObjectID); err != nil {
+				logger.Warn("mqtt: publish IV detection failed",
+					"kind", kind, "present", det.Present, "error", err)
+			}
+		}, 30*time.Second)
+
+		webSrv.SetHLEventsDispatcher(ivDispatcher)
+		logger.Info("hl_event_collectd dispatcher attached", "iv_kinds", []string{"human", "pet"})
 	}
 
 	// Alarm engine — standalone state machine for arm/disarm/triggered logic.

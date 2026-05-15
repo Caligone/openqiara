@@ -194,3 +194,37 @@ func ShutterDiscoveryPayload(prefix string) (string, []byte) {
 	data, _ := json.Marshal(payload)
 	return topic, data
 }
+
+// IVDetectionDiscoveryPayload retourne la config auto-discovery HA pour
+// un binary_sensor de détection IntelliVision (humain ou animal).
+//
+// kind est "human" ou "pet" — utilisé pour le suffixe topic + unique_id
+// + nom convivial + device_class HA (motion/occupancy).
+func IVDetectionDiscoveryPayload(prefix, kind string) (string, []byte) {
+	displayName := "Humain détecté"
+	deviceClass := "motion"
+	if kind == "pet" {
+		displayName = "Animal détecté"
+		deviceClass = "occupancy"
+	}
+	topic := "homeassistant/binary_sensor/openqiara_iv_" + kind + "/config"
+	payload := discoveryPayload{
+		Name:          displayName,
+		UniqueID:      "openqiara_iv_" + kind,
+		DeviceClass:   deviceClass,
+		StateTopic:    prefix + "/iv/" + kind + "/state",
+		ValueTemplate: "{{ value_json.detected | lower }}",
+		PayloadOn:     "true",
+		PayloadOff:    "false",
+		JSONAttributesTopic:    prefix + "/iv/" + kind + "/state",
+		JSONAttributesTemplate: "{\"confidence\": {{ value_json.confidence }}, \"object_id\": \"{{ value_json.object_id }}\"}",
+		Device: haDevice{
+			Identifiers:  []string{"openqiara_camera"},
+			Name:         "OpenQiara Caméra",
+			Manufacturer: "Qiara/Cofidur",
+			Model:        "HOMELABCAM",
+		},
+	}
+	data, _ := json.Marshal(payload)
+	return topic, data
+}

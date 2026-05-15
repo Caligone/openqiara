@@ -113,6 +113,30 @@ func (p *HAPublisher) PublishShutterState(ctx context.Context, open bool) error 
 	return p.publish(ctx, p.prefix+"/shutter/state", payload, true)
 }
 
+// PublishIVDiscovery publishes the auto-discovery config for the two IV
+// binary_sensors (human + pet). Idempotent ; à appeler une fois au boot.
+func (p *HAPublisher) PublishIVDiscovery(ctx context.Context) error {
+	for _, kind := range []string{"human", "pet"} {
+		topic, payload := IVDetectionDiscoveryPayload(p.prefix, kind)
+		if err := p.publish(ctx, topic, payload, true); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// PublishIVDetection met à jour l'état d'un binary_sensor IV
+// (kind = "human" ou "pet"). detected = présence courante, confidence
+// 0..1, objectID = ID interne IV pour traçabilité.
+func (p *HAPublisher) PublishIVDetection(ctx context.Context, kind string, detected bool, confidence float64, objectID string) error {
+	payload, _ := json.Marshal(map[string]any{
+		"detected":   detected,
+		"confidence": confidence,
+		"object_id":  objectID,
+	})
+	return p.publish(ctx, p.prefix+"/iv/"+kind+"/state", payload, true)
+}
+
 // Subscribe subscribes to a raw MQTT topic with the given handler.
 // Used for custom integrations like listening to alarmo/state.
 func (p *HAPublisher) Subscribe(topic string, handler func(topic string, payload []byte)) {
