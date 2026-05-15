@@ -81,10 +81,10 @@ func (w *LogWatcher) tailFile() {
 	if err != nil {
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	// Seek to end
-	f.Seek(0, 2)
+	_, _ = f.Seek(0, 2)
 
 	// Stat the open file to detect rotation later (inode changes when logrotate
 	// renames the file and a new one takes its place).

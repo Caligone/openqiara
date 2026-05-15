@@ -80,7 +80,7 @@ func TestSensors(t *testing.T) {
 				},
 			},
 		}
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	})
 
 	srv := newTestServer(t, mux)
@@ -131,7 +131,7 @@ func TestReadSensor(t *testing.T) {
 		}
 
 		var req endpointsReadRequest
-		json.NewDecoder(r.Body).Decode(&req)
+		_ = json.NewDecoder(r.Body).Decode(&req)
 		if len(req.List) == 0 || req.List[0].NodeID != 33 {
 			t.Error("unexpected request body")
 		}
@@ -146,7 +146,7 @@ func TestReadSensor(t *testing.T) {
 				},
 			}},
 		}
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	})
 
 	srv := newTestServer(t, mux)
@@ -185,7 +185,7 @@ func TestReadSensor_ReauthOn401(t *testing.T) {
 				EPValues: []endpointValue{{EPName: "state", Value: false}},
 			}},
 		}
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	})
 
 	srv := newTestServer(t, mux)
@@ -210,7 +210,7 @@ func TestStartPairing(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/home/pairing", func(w http.ResponseWriter, r *http.Request) {
 		var req pairingRequest
-		json.NewDecoder(r.Body).Decode(&req)
+		_ = json.NewDecoder(r.Body).Decode(&req)
 
 		if req.Op != "start_adapter" {
 			t.Errorf("op = %q, want start_adapter", req.Op)
@@ -220,7 +220,7 @@ func TestStartPairing(t *testing.T) {
 		}
 
 		resp := pairingResponse{Session: 2127910, LayoutName: "WaitItem", Refresh: 10000}
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	})
 
 	srv := newTestServer(t, mux)
@@ -256,7 +256,7 @@ func TestPollPairing_Terminated(t *testing.T) {
 			NodeType:   "Node.DomusNode.HlDws",
 			Session:    2127910,
 		}
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	})
 
 	srv := newTestServer(t, mux)
@@ -284,7 +284,7 @@ func TestPollPairing_Waiting(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/home/pairing", func(w http.ResponseWriter, r *http.Request) {
 		resp := pairingResponse{LayoutName: "WaitItem", Session: 2127910, Refresh: 10000}
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	})
 
 	srv := newTestServer(t, mux)
@@ -309,14 +309,14 @@ func TestStopPairing(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/home/pairing", func(w http.ResponseWriter, r *http.Request) {
 		var req pairingRequest
-		json.NewDecoder(r.Body).Decode(&req)
+		_ = json.NewDecoder(r.Body).Decode(&req)
 		if req.Op != "stop" {
 			t.Errorf("op = %q, want stop", req.Op)
 		}
 		if req.Session != 123 {
 			t.Errorf("session = %d, want 123", req.Session)
 		}
-		json.NewEncoder(w).Encode(pairingResponse{})
+		_ = json.NewEncoder(w).Encode(pairingResponse{})
 	})
 
 	srv := newTestServer(t, mux)
@@ -340,22 +340,19 @@ func TestEvents_PollEmitsOnChange(t *testing.T) {
 				Values: domusValues{Reachable: 1},
 			}},
 		}
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	})
 	mux.HandleFunc("/api/v1/home/endpoints_read", func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		// State changes on second call.
-		state := false
-		if callCount >= 2 {
-			state = true
-		}
+		state := callCount >= 2
 		resp := endpointsReadResponse{
 			List: []endpointResult{{
 				NodeID:   33,
 				EPValues: []endpointValue{{EPName: "state", Value: state}},
 			}},
 		}
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	})
 
 	srv := newTestServer(t, mux)
@@ -389,7 +386,7 @@ func TestEvents_PollEmitsOnChange(t *testing.T) {
 		t.Fatal("timed out waiting for state change event")
 	}
 
-	c.Close()
+	_ = c.Close()
 }
 
 func TestClose_Idempotent(t *testing.T) {

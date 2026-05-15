@@ -151,7 +151,7 @@ func (t *LogTail) tailOnce(ctx context.Context, firstOpen bool) error {
 	if err != nil {
 		return fmt.Errorf("open %s: %w", t.path, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	startStat, err := f.Stat()
 	if err != nil {

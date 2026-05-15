@@ -52,7 +52,9 @@ func PairSensor(ctx context.Context, mux *charmux.Client, keys []VendorKey, next
 	}
 	cancelInit()
 	ctxNet, cancelNet := context.WithTimeout(ctx, 3*time.Second)
-	mux.GetNet(ctxNet)
+	if _, err := mux.GetNet(ctxNet); err != nil {
+		logger.Warn("pairing: GetNet failed", "error", err)
+	}
 	cancelNet()
 
 	// First 0x15 — MCU may respond with 0x16 (stop) then we resend
@@ -61,7 +63,9 @@ func PairSensor(ctx context.Context, mux *charmux.Client, keys []VendorKey, next
 	cmd[1] = nextAddr
 	cmd[5] = nextAddr
 	logger.Info("pairing: sending START_PAIRING (0x15) [1st]", "next_addr", nextAddr)
-	mux.SendRawCTRL(cmd)
+	if err := mux.SendRawCTRL(cmd); err != nil {
+		logger.Warn("pairing: SendRawCTRL 0x15 #1 failed", "error", err)
+	}
 
 	// Send watchdog between the two 0x15 (captured from fbxhome)
 	mux.SendWatchdog()
@@ -69,7 +73,9 @@ func PairSensor(ctx context.Context, mux *charmux.Client, keys []VendorKey, next
 	// Wait briefly for 0x16 spontaneous stop from MCU, then resend 0x15
 	time.Sleep(500 * time.Millisecond)
 	logger.Info("pairing: sending START_PAIRING (0x15) [2nd]", "next_addr", nextAddr)
-	mux.SendRawCTRL(cmd)
+	if err := mux.SendRawCTRL(cmd); err != nil {
+		logger.Warn("pairing: SendRawCTRL 0x15 #2 failed", "error", err)
+	}
 
 	logger.Info("pairing: waiting for beacon (reset sensor now)...")
 	deadline := time.After(90 * time.Second)
@@ -84,7 +90,9 @@ func PairSensor(ctx context.Context, mux *charmux.Client, keys []VendorKey, next
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case <-deadline:
-			mux.SendRawCTRL([]byte{opStopPairing})
+			if err := mux.SendRawCTRL([]byte{opStopPairing}); err != nil {
+				logger.Warn("pairing: SendRawCTRL stop on timeout failed", "error", err)
+			}
 			return nil, fmt.Errorf("pairing: timeout")
 		case evt, ok := <-events:
 			if !ok {
@@ -113,7 +121,9 @@ func PairSensor(ctx context.Context, mux *charmux.Client, keys []VendorKey, next
 				copy(accept[1:9], uid[:])
 				copy(accept[9:41], key.Key[:])
 				logger.Info("pairing: sending pair request (0x1a)")
-				mux.SendRawCTRL(accept)
+				if err := mux.SendRawCTRL(accept); err != nil {
+					logger.Warn("pairing: SendRawCTRL pair request failed", "error", err)
+				}
 				continue
 			}
 
@@ -125,7 +135,9 @@ func PairSensor(ctx context.Context, mux *charmux.Client, keys []VendorKey, next
 				confirm[0] = opPairConfirm
 				copy(confirm[1:9], uid[:])
 				logger.Info("pairing: sending confirmation (0x1c)")
-				mux.SendRawCTRL(confirm)
+				if err := mux.SendRawCTRL(confirm); err != nil {
+					logger.Warn("pairing: SendRawCTRL confirm failed", "error", err)
+				}
 				continue
 			}
 
@@ -142,7 +154,9 @@ func PairSensor(ctx context.Context, mux *charmux.Client, keys []VendorKey, next
 			if op == opStopPairing && matchedKey != nil {
 				logger.Info("pairing: stop received (0x16)")
 				// Echo the 0x16 back to MCU (captured from fbxhome pcap)
-				mux.SendRawCTRL([]byte{opStopPairing})
+				if err := mux.SendRawCTRL([]byte{opStopPairing}); err != nil {
+					logger.Warn("pairing: SendRawCTRL stop echo failed", "error", err)
+				}
 				logger.Info("pairing: stop echo sent (0x16)")
 				if address > 0 {
 					goto config
@@ -441,27 +455,6 @@ func sendConfig(ctx context.Context, mux *charmux.Client, addr uint32, model str
 		logger.Info("pairing: PKT sent", "frame", f.name, "len", len(raw), "hex", fmt.Sprintf("%x", raw), "ackCnt", sensorCnt)
 		cnt++
 	}
-}
-
-// buildManagedFrame builds a ManagedFrame struct.
-func buildManagedFrame(dst byte, counter uint32, ackCnt uint32, wflags byte, payload []byte, flags uint16) *charmux.ManagedFrame {
-	return &charmux.ManagedFrame{
-		GWDst:   uint32(dst),
-		GWSrc:   1,
-		RFByte:  0,
-		Counter: counter,
-		Src:     1,
-		Flags:   flags,
-		AckDst:  uint32(dst),
-		AckCnt:  ackCnt,
-		WFlags:  wflags,
-		Payload: payload,
-	}
-}
-
-// buildManagedRaw builds a raw serialized managed frame with default fbxhome flags (0x0547).
-func buildManagedRaw(dst byte, counter uint32, ackCnt uint32, wflags byte, payload []byte) []byte {
-	return buildManagedRawFull(dst, counter, ackCnt, wflags, payload, 0x0547, 0)
 }
 
 // buildManagedRawFlags builds a raw serialized managed frame with specified flags.

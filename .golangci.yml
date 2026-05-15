@@ -1,0 +1,26 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - staticcheck
+    - unused
+
+  settings:
+    errcheck:
+      # Patterns courants à ignorer car l'erreur n'apporte rien d'actionnable
+      # (defer Close, écriture stdout/stderr, signaux d'arrêt best-effort).
+      exclude-functions:
+        - (io.Closer).Close
+        - (net.Conn).Close
+        - (net.PacketConn).Close
+        - (*os.File).Close
+        - (net.Conn).SetReadDeadline
+        - (net.PacketConn).SetReadDeadline
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - fmt.Print
+        - fmt.Printf
+        - fmt.Println

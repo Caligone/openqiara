@@ -27,10 +27,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "cant create log: %v\n", err)
 		os.Exit(1)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	// Sanity check + Sync writer.
-	fmt.Fprintln(f, "PoC starting...")
+	_, _ = fmt.Fprintln(f, "PoC starting...")
 	_ = f.Sync()
 	logger := slog.New(slog.NewTextHandler(&syncWriter{f}, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	fmt.Printf("[poc %d] logging to %s\n", os.Getpid(), logfile)
@@ -43,7 +43,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "dial: %v\n", err)
 		os.Exit(1)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	fmt.Printf("[poc %d] connected: %s\n", os.Getpid(), c.Name())
 

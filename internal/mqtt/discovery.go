@@ -153,17 +153,6 @@ func buildExtraDiscoveryTopics(prefix string, sensor camera.Sensor) []struct {
 	return extras
 }
 
-// allDiscoveryTopics returns all discovery topics for a sensor (for deletion).
-func allDiscoveryTopics(sensor camera.Sensor) []string {
-	var topics []string
-	if t, ok := buildDiscoveryTopic(sensor); ok {
-		topics = append(topics, t)
-	}
-	topics = append(topics, fmt.Sprintf("homeassistant/sensor/openqiara_%d_battery/config", sensor.ID))
-	topics = append(topics, fmt.Sprintf("homeassistant/sensor/openqiara_%d_temperature/config", sensor.ID))
-	return topics
-}
-
 func modelForType(sensorType string) string {
 	models := map[string]string{
 		"DWS": "HOMELABDWS",

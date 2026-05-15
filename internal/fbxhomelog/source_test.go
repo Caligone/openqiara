@@ -92,7 +92,7 @@ func appendLine(t *testing.T, path, line string) {
 	if err != nil {
 		t.Fatalf("open append: %v", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if _, err := fmt.Fprintln(f, line); err != nil {
 		t.Fatalf("write: %v", err)
 	}

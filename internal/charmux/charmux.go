@@ -67,7 +67,7 @@ func (c *Client) Connect(ctx context.Context) error {
 	}
 	c.pktConn, err = dialChannel(c.host, ChannelPKT)
 	if err != nil {
-		c.ctrlConn.Close()
+		_ = c.ctrlConn.Close()
 		return fmt.Errorf("charmux: connect PKT: %w", err)
 	}
 	// Shutter: bind client port 8007, connect to server 8006.
@@ -88,8 +88,8 @@ func (c *Client) Connect(ctx context.Context) error {
 	if err == nil {
 		wdConn, wdErr := net.DialUDP("udp4", nil, wdAddr)
 		if wdErr == nil {
-			wdConn.Write([]byte{0x05})
-			wdConn.Close()
+			_, _ = wdConn.Write([]byte{0x05})
+			_ = wdConn.Close()
 			c.log.Info("charmux: watchdog init sent (0x05)")
 		} else {
 			c.log.Warn("charmux: watchdog init failed", "err", wdErr)
@@ -98,7 +98,7 @@ func (c *Client) Connect(ctx context.Context) error {
 
 	// Shutter init byte 0x02 (captured from fbxhome)
 	if c.shutterConn != nil {
-		c.shutterConn.Write([]byte{0x02})
+		_, _ = c.shutterConn.Write([]byte{0x02})
 		c.log.Info("charmux: shutter init sent (0x02)")
 	}
 
@@ -192,8 +192,8 @@ func (c *Client) SendWatchdog() {
 	if err != nil {
 		return
 	}
-	conn.Write([]byte{0x05})
-	conn.Close()
+	_, _ = conn.Write([]byte{0x05})
+	_ = conn.Close()
 }
 
 // SendShutter sends a command on the Shutter channel.
@@ -220,13 +220,13 @@ func (c *Client) CTRLResp() <-chan []byte { return c.ctrlResp }
 func (c *Client) Close() error {
 	close(c.done)
 	if c.ctrlConn != nil {
-		c.ctrlConn.Close()
+		_ = c.ctrlConn.Close()
 	}
 	if c.pktConn != nil {
-		c.pktConn.Close()
+		_ = c.pktConn.Close()
 	}
 	if c.shutterConn != nil {
-		c.shutterConn.Close()
+		_ = c.shutterConn.Close()
 	}
 	c.wg.Wait()
 	close(c.events)
@@ -246,7 +246,7 @@ func (c *Client) recvCTRLLoop() {
 		default:
 		}
 
-		c.ctrlConn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+		_ = c.ctrlConn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
 		n, err := c.ctrlConn.Read(buf)
 		if err != nil {
 			if isTimeout(err) {
@@ -288,7 +288,7 @@ func (c *Client) recvPKTLoop() {
 		default:
 		}
 
-		c.pktConn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+		_ = c.pktConn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
 		n, err := c.pktConn.Read(buf)
 		if err != nil {
 			if isTimeout(err) {

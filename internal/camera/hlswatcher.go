@@ -151,7 +151,7 @@ func (w *HLSWatcher) readPlaylist() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var segments []string
 	scanner := bufio.NewScanner(f)
@@ -198,7 +198,7 @@ func (w *HLSWatcher) readStableFile(ctx context.Context, path string) ([]byte, e
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return io.ReadAll(f)
 }
 

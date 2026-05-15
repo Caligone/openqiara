@@ -56,7 +56,9 @@ func (m *MQTTPublisher) Start(ctx context.Context, sensors []camera.Sensor, cmds
 				if err := m.pub.PublishAlarmDiscovery(ctx, s); err != nil {
 					m.log.Warn("alarm discovery failed", "error", err)
 				} else {
-					m.pub.PublishAlarmState(ctx, s.ID, "disarmed")
+					if err := m.pub.PublishAlarmState(ctx, s.ID, "disarmed"); err != nil {
+						m.log.Warn("publish initial alarm state failed", "error", err)
+					}
 				}
 			} else {
 				// Remove any stale discovery from a previous standalone run.

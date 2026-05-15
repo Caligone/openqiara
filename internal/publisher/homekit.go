@@ -132,7 +132,7 @@ func (p *HomeKitPublisher) PublishSensorState(ctx context.Context, sensor camera
 			if sensor.Open {
 				state = characteristic.ContactSensorStateContactNotDetected
 			}
-			a.ContactSensor.ContactSensorState.SetValue(state)
+			_ = a.ContactSensor.ContactSensorState.SetValue(state)
 		}
 	case "PIR":
 		if a, ok := p.motions[sensor.ID]; ok {
@@ -172,9 +172,9 @@ func (p *HomeKitPublisher) PublishAlarmState(ctx context.Context, state string) 
 	default:
 		return nil
 	}
-	p.alarm.SecuritySystem.SecuritySystemCurrentState.SetValue(current)
+	_ = p.alarm.SecuritySystem.SecuritySystemCurrentState.SetValue(current)
 	if target >= 0 {
-		p.alarm.SecuritySystem.SecuritySystemTargetState.SetValue(target)
+		_ = p.alarm.SecuritySystem.SecuritySystemTargetState.SetValue(target)
 	}
 	return nil
 }
@@ -215,7 +215,7 @@ func (p *HomeKitPublisher) buildAndServe(sensors []camera.Sensor) error {
 				name = fmt.Sprintf("Porte %d", s.ID)
 			}
 			a := accessory.NewContactSensor(accessory.Info{Name: name, Manufacturer: "Qiara"})
-			a.A.Id = aidSensorBase + uint64(s.ID)
+			a.Id = aidSensorBase + uint64(s.ID)
 			p.contacts[s.ID] = a
 			accs = append(accs, a.A)
 
@@ -225,7 +225,7 @@ func (p *HomeKitPublisher) buildAndServe(sensors []camera.Sensor) error {
 				name = fmt.Sprintf("Mouvement %d", s.ID)
 			}
 			a := accessory.NewMotionSensor(accessory.Info{Name: name, Manufacturer: "Qiara"})
-			a.A.Id = aidSensorBase + uint64(s.ID)
+			a.Id = aidSensorBase + uint64(s.ID)
 			p.motions[s.ID] = a
 			accs = append(accs, a.A)
 
@@ -235,7 +235,7 @@ func (p *HomeKitPublisher) buildAndServe(sensors []camera.Sensor) error {
 				name = fmt.Sprintf("Sirène %d", s.ID)
 			}
 			a := accessory.NewSwitch(accessory.Info{Name: name, Manufacturer: "Qiara"})
-			a.A.Id = aidSensorBase + uint64(s.ID)
+			a.Id = aidSensorBase + uint64(s.ID)
 			if p.cmds != nil && p.cmds.OnSirenCommand != nil {
 				sensorID := s.ID
 				a.Switch.On.OnValueRemoteUpdate(func(on bool) {
@@ -260,7 +260,7 @@ func (p *HomeKitPublisher) buildAndServe(sensors []camera.Sensor) error {
 			Name:         "Alarme OpenQiara",
 			Manufacturer: "OpenQiara",
 		})
-		a.A.Id = aidAlarm
+		a.Id = aidAlarm
 		// Restreint l'app Maison aux 3 modes qu'on supporte (pas de "Au domicile",
 		// redondant avec "Absent" dans notre modèle). HK utilise ValidValues pour
 		// masquer les autres dans l'UI.
@@ -302,7 +302,7 @@ func (p *HomeKitPublisher) buildAndServe(sensors []camera.Sensor) error {
 			Name:         "Cache objectif",
 			Manufacturer: "OpenQiara",
 		})
-		shutter.A.Id = aidShutter
+		shutter.Id = aidShutter
 		shutter.Switch.On.OnValueRemoteUpdate(func(on bool) {
 			p.cmds.OnShutterCommand(on)
 		})
@@ -314,7 +314,7 @@ func (p *HomeKitPublisher) buildAndServe(sensors []camera.Sensor) error {
 	if p.cfg.Camera.Enabled {
 		p.camera = NewHomeKitCamera(p.cfg.Camera, p.log)
 		camAcc := p.camera.Accessory()
-		camAcc.A.Id = aidCamera
+		camAcc.Id = aidCamera
 		accs = append(accs, camAcc.A)
 		p.log.Info("homekit: camera accessory added", "name", p.cfg.Camera.Name)
 	}
@@ -325,8 +325,8 @@ func (p *HomeKitPublisher) buildAndServe(sensors []camera.Sensor) error {
 
 	// Ensure data directory exists. The FsStore must be reused across
 	// rebuilds — it holds the iOS pairing material.
-	os.MkdirAll(filepath.Dir(p.cfg.DataDir), 0755)
-	os.MkdirAll(p.cfg.DataDir, 0755)
+	_ = os.MkdirAll(filepath.Dir(p.cfg.DataDir), 0755)
+	_ = os.MkdirAll(p.cfg.DataDir, 0755)
 
 	fs := hap.NewFsStore(p.cfg.DataDir)
 	server, err := hap.NewServer(fs, bridge.A, accs...)

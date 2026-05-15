@@ -102,8 +102,8 @@ func TestParseRealChunkPTSDebug(t *testing.T) {
 		}
 	}()
 
-	parser.Feed(ctx, data)
-	parser.Flush(ctx)
+	_, _ = parser.Feed(ctx, data)
+	_ = parser.Flush(ctx)
 	parser.Close()
 	<-done
 

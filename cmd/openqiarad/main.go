@@ -75,7 +75,7 @@ func main() {
 		logger.Error("no camera backend available")
 		os.Exit(1)
 	}
-	defer cam.Close()
+	defer func() { _ = cam.Close() }()
 
 	sensors, err := buildSensorList(ctx, cam, store, logger)
 	if err != nil {
@@ -88,7 +88,7 @@ func main() {
 
 	// Publishers (MQTT and/or HomeKit)
 	var pubs []publisher.Publisher
-	var alarmState string = "disarmed"
+	alarmState := "disarmed"
 
 	// Command handler shared by all publishers
 	cmds := &publisher.CommandHandler{
@@ -148,7 +148,9 @@ func main() {
 				if err := cam.SetShutter(ctx, open); err != nil {
 					logger.Warn("shutter command failed", "error", err)
 				} else {
-					mqttPub.HAPublisher().PublishShutterState(ctx, open)
+					if err := mqttPub.HAPublisher().PublishShutterState(ctx, open); err != nil {
+						logger.Warn("publish shutter state failed", "error", err)
+					}
 				}
 			}, logger)
 
@@ -169,7 +171,9 @@ func main() {
 				updated.ItemID = s.ItemID
 				updated.Type = s.Type
 				updated.Reachable = s.Reachable
-				mqttPub.PublishSensorState(ctx, *updated)
+				if err := mqttPub.PublishSensorState(ctx, *updated); err != nil {
+					logger.Warn("publish initial sensor state failed", "id", s.ID, "error", err)
+				}
 			}
 		}
 	} else {
@@ -239,7 +243,9 @@ func main() {
 		OnAlarmStateChanged: func(ctx context.Context, state string) error {
 			alarmState = state
 			for _, p := range pubs {
-				p.PublishAlarmState(ctx, state)
+				if err := p.PublishAlarmState(ctx, state); err != nil {
+					logger.Warn("publish alarm state failed", "error", err)
+				}
 			}
 			return nil
 		},
@@ -483,7 +489,7 @@ func main() {
 	// Ensure publishers are closed on exit
 	defer func() {
 		for _, p := range pubs {
-			p.Close()
+			_ = p.Close()
 		}
 	}()
 

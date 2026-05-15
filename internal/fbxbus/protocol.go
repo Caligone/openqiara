@@ -78,15 +78,6 @@ func helloFrame(serial uint32) []byte {
 	return frame
 }
 
-// encodeUint32Field encode un uint32 (sig='u'). Pas de length, valeur inline.
-func encodeUint32Field(fc byte, v uint32) []byte {
-	out := make([]byte, 8)
-	out[0] = fc
-	out[1] = sigUint32
-	binary.LittleEndian.PutUint32(out[4:], v)
-	return out
-}
-
 // makeFrame construit un message complet (header + fields + body).
 // body : payload value(s) qui suivent les fields (les "args" du signal/call).
 // bodyLen : la valeur exacte à inscrire dans le header pour body_len.

@@ -23,12 +23,12 @@ func newMockServer(t *testing.T, port int) *mockServer {
 	return &mockServer{conn: conn}
 }
 
-func (s *mockServer) close() { s.conn.Close() }
+func (s *mockServer) close() { _ = s.conn.Close() }
 
 // respond reads one packet and sends reply back.
 func (s *mockServer) respond(reply []byte) error {
 	buf := make([]byte, 256)
-	s.conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_ = s.conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 	_, remote, err := s.conn.ReadFromUDP(buf)
 	if err != nil {
 		return err
@@ -52,8 +52,8 @@ func pickFreePorts(t *testing.T) (int, int) {
 	}
 	p1 := c1.LocalAddr().(*net.UDPAddr).Port
 	p2 := c2.LocalAddr().(*net.UDPAddr).Port
-	c1.Close()
-	c2.Close()
+	_ = c1.Close()
+	_ = c2.Close()
 	return p1, p2
 }
 
@@ -83,11 +83,11 @@ func TestGetInfo(t *testing.T) {
 	if err := c.Connect(ctx); err != nil {
 		t.Fatalf("Connect: %v", err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	// Simulate GET_INFO response: [0x02, 0x10, 0x00, 0x01, 0xFF, 0x00, 0x00, 0x03]
 	reply := []byte{0x02, 0x10, 0x00, 0x01, 0xFF, 0x00, 0x00, 0x03}
-	go mock.respond(reply)
+	go func() { _ = mock.respond(reply) }()
 
 	info, err := c.GetInfo(ctx)
 	if err != nil {
@@ -127,7 +127,7 @@ func TestSendCTRL_Timeout(t *testing.T) {
 	if err := c.Connect(ctx); err != nil {
 		t.Fatalf("Connect: %v", err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	_, err := c.SendCTRL(ctx, []byte{OpGetInfo})
 	if err == nil {
@@ -163,7 +163,7 @@ func TestPKTEvents(t *testing.T) {
 		// Give the recv loop time to start.
 		time.Sleep(50 * time.Millisecond)
 		clientAddr := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: pktClient}
-		pktMock.conn.WriteToUDP(payload, clientAddr)
+		_, _ = pktMock.conn.WriteToUDP(payload, clientAddr)
 	}()
 
 	select {
@@ -178,5 +178,5 @@ func TestPKTEvents(t *testing.T) {
 		t.Fatal("timed out waiting for PKT event")
 	}
 
-	c.Close()
+	_ = c.Close()
 }

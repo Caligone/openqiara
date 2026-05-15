@@ -23,7 +23,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Connect failed: %v\n", err)
 		os.Exit(1)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	info, _ := client.GetInfo(ctx)
 	if info != nil {

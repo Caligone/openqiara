@@ -76,7 +76,7 @@ func TestMultiPublisherDispatch(t *testing.T) {
 	// Dispatch sensor state to all publishers
 	sensor := camera.Sensor{ID: 86, Type: "DWS", Open: true}
 	for _, p := range pubs {
-		p.PublishSensorState(ctx, sensor)
+		_ = p.PublishSensorState(ctx, sensor)
 	}
 
 	if len(pub1.sensorStates) != 1 || pub1.sensorStates[0].ID != 86 {
@@ -88,7 +88,7 @@ func TestMultiPublisherDispatch(t *testing.T) {
 
 	// Dispatch alarm state
 	for _, p := range pubs {
-		p.PublishAlarmState(ctx, "triggered")
+		_ = p.PublishAlarmState(ctx, "triggered")
 	}
 
 	if len(pub1.alarmStates) != 1 || pub1.alarmStates[0] != "triggered" {

@@ -183,7 +183,7 @@ func (c *FbxhomeClient) Sensors(ctx context.Context) ([]Sensor, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get domus_nodes: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("get domus_nodes: status %d", resp.StatusCode)
@@ -244,11 +244,11 @@ func (c *FbxhomeClient) ReadSensor(ctx context.Context, nodeID int, endpoints []
 	if err != nil {
 		return nil, fmt.Errorf("endpoints_read: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Re-auth on 401/403 and retry once.
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if err := c.authenticate(ctx); err != nil {
 			return nil, fmt.Errorf("re-auth after %d: %w", resp.StatusCode, err)
 		}
@@ -294,10 +294,10 @@ func (c *FbxhomeClient) EndpointsRead(ctx context.Context, nodeID int, endpoints
 	if err != nil {
 		return nil, fmt.Errorf("endpoints_read: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if err := c.authenticate(ctx); err != nil {
 			return nil, fmt.Errorf("re-auth: %w", err)
 		}
@@ -320,7 +320,7 @@ func (c *FbxhomeClient) EndpointsRead(ctx context.Context, nodeID int, endpoints
 
 	out := make([]EndpointValue, len(result.List[0].EPValues))
 	for i, ep := range result.List[0].EPValues {
-		out[i] = EndpointValue{EPName: ep.EPName, Value: ep.Value}
+		out[i] = EndpointValue(ep)
 	}
 	return out, nil
 }
@@ -329,7 +329,7 @@ func (c *FbxhomeClient) EndpointsRead(ctx context.Context, nodeID int, endpoints
 func (c *FbxhomeClient) EndpointsWrite(ctx context.Context, nodeID int, eps []EndpointWriteEntry) error {
 	writeEps := make([]endpointWrite, len(eps))
 	for i, e := range eps {
-		writeEps[i] = endpointWrite{EPName: e.EPName, Value: e.Value}
+		writeEps[i] = endpointWrite(e)
 	}
 	body := endpointsWriteRequest{
 		List: []endpointWriteQuery{{NodeID: nodeID, Endpoints: writeEps}},
@@ -350,10 +350,10 @@ func (c *FbxhomeClient) EndpointsWrite(ctx context.Context, nodeID int, eps []En
 	if err != nil {
 		return fmt.Errorf("endpoints_write: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if err := c.authenticate(ctx); err != nil {
 			return fmt.Errorf("re-auth: %w", err)
 		}
@@ -469,7 +469,7 @@ func (c *FbxhomeClient) DeleteSensor(ctx context.Context, nodeID int) error {
 	if err != nil {
 		return fmt.Errorf("delete sensor %d: %w", nodeID, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -492,7 +492,7 @@ func (c *FbxhomeClient) OpenStream(ctx context.Context) (StreamInfo, error) {
 	if err != nil {
 		return StreamInfo{}, fmt.Errorf("open_stream: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var result struct {
 		Passphrase string `json:"passphrase"`
@@ -690,7 +690,7 @@ func (c *FbxhomeClient) postPairing(ctx context.Context, body pairingRequest, re
 	if err != nil {
 		return fmt.Errorf("pairing %s: %w", body.Op, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)

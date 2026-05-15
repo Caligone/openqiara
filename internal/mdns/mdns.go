@@ -70,7 +70,7 @@ func Announce(ctx context.Context, port int, logger *slog.Logger) error {
 		"ips", ips)
 
 	<-ctx.Done()
-	srv.Shutdown()
+	_ = srv.Shutdown()
 	return nil
 }
 

@@ -23,14 +23,6 @@ const (
 	nodeTypeSRN byte = 0x0E
 )
 
-// nodeTypeToShort maps MCU node type bytes to short sensor type strings.
-var nodeTypeToShort = map[byte]string{
-	nodeTypeDWS: "DWS",
-	nodeTypeKPD: "KPD",
-	nodeTypePIR: "PIR",
-	nodeTypeSRN: "SRN",
-}
-
 // nodeEntrySize is the approximate size of one entry in the MCU node table.
 const nodeEntrySize = 9
 
@@ -550,33 +542,6 @@ func (c *CharmuxClient) TriggerSirenAlarm(ctx context.Context, sensorID int, dur
 func (c *CharmuxClient) StopSiren(ctx context.Context, sensorID int) error {
 	return c.SendSirenDebug(ctx, sensorID,
 		[]byte{0x01, 0x55, 0x05, 0x00, 0x84}, false, false, 0)
-}
-
-// sendSRNFrame builds and sends one managed frame to a SRN with the
-// "actuator command" envelope: flags=0x0883 (no ACK), wflags=addr,
-// counter from the session-wide managed counter. The payload is
-// supplied by the caller. Used for wake (5506), status (550f) and
-// test (55 05 01 0a 28) frames.
-func (c *CharmuxClient) sendSRNFrame(ctx context.Context, addr int, payload []byte, label string) error {
-	cnt := c.nextManagedCnt()
-	frame := charmux.ManagedFrame{
-		GWDst:   uint32(addr),
-		GWSrc:   1,
-		RFByte:  0,
-		Counter: cnt,
-		Src:     1,
-		Flags:   0x0883,
-		AckDst:  uint32(addr),
-		AckCnt:  0,
-		WFlags:  byte(addr),
-		Payload: payload,
-	}
-	raw := frame.Serialize()
-	c.logger.Info("siren: sending "+label,
-		"addr", addr,
-		"cnt", cnt,
-		"hex", fmt.Sprintf("%x", raw))
-	return c.mux.SendPKT(ctx, raw)
 }
 
 // SendSirenBeep demande à la SRN à l'adresse addr d'émettre le bip
@@ -1279,21 +1244,31 @@ func (c *CharmuxClient) reinitSensor(addr int, initialEvt charmux.Event, events 
 	// Refreshes the MCU's radio association (same sequence as boot.sh).
 	c.logger.Info("reinit: re-registering sensor via double 0x15", "addr", addr)
 	ctxInit, cancelInit := context.WithTimeout(context.Background(), 3*time.Second)
-	c.mux.GetInfo(ctxInit)
+	if _, err := c.mux.GetInfo(ctxInit); err != nil {
+		c.logger.Warn("reinit: GetInfo failed", "error", err)
+	}
 	cancelInit()
 	ctxNet, cancelNet := context.WithTimeout(context.Background(), 3*time.Second)
-	c.mux.GetNet(ctxNet)
+	if _, err := c.mux.GetNet(ctxNet); err != nil {
+		c.logger.Warn("reinit: GetNet failed", "error", err)
+	}
 	cancelNet()
 	cmd := make([]byte, 18)
 	cmd[0] = 0x15
 	cmd[1] = byte(addr)
 	cmd[5] = byte(addr)
-	c.mux.SendRawCTRL(cmd)
+	if err := c.mux.SendRawCTRL(cmd); err != nil {
+		c.logger.Warn("reinit: SendRawCTRL 0x15 #1 failed", "error", err)
+	}
 	c.mux.SendWatchdog()
 	time.Sleep(500 * time.Millisecond)
-	c.mux.SendRawCTRL(cmd)
+	if err := c.mux.SendRawCTRL(cmd); err != nil {
+		c.logger.Warn("reinit: SendRawCTRL 0x15 #2 failed", "error", err)
+	}
 	time.Sleep(1 * time.Second)
-	c.mux.SendRawCTRL([]byte{0x16})
+	if err := c.mux.SendRawCTRL([]byte{0x16}); err != nil {
+		c.logger.Warn("reinit: SendRawCTRL 0x16 failed", "error", err)
+	}
 	c.mux.SendWatchdog()
 
 	kpdCode := c.kpdCodes[addr]

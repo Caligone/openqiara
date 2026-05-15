@@ -102,7 +102,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	defer s.hub.Unsubscribe(ch)
 
 	// Send an initial comment line to flush headers immediately.
-	fmt.Fprint(w, ": connected\n\n")
+	_, _ = fmt.Fprint(w, ": connected\n\n")
 	flusher.Flush()
 
 	// Ping every 30s to keep the connection alive through proxies.

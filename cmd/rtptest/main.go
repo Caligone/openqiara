@@ -58,7 +58,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("dial: %v", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	log.Printf("sending RTP H.264 to %s", *dst)
 
 	pkter := publisher.NewH264Packetizer(0xCAFEBABE)

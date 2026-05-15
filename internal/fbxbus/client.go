@@ -186,7 +186,7 @@ func (c *Client) send(buf []byte) error {
 func (c *Client) recv(timeout time.Duration) ([]byte, error) {
 	if timeout > 0 {
 		_ = c.conn.SetReadDeadline(time.Now().Add(timeout))
-		defer c.conn.SetReadDeadline(time.Time{})
+		defer func() { _ = c.conn.SetReadDeadline(time.Time{}) }()
 	}
 	buf := make([]byte, 8192)
 	n, err := c.conn.Read(buf)

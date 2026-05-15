@@ -28,7 +28,7 @@ func ReadKPDCodes(xmlPath string) ([]KPDCode, error) {
 	var codes []KPDCode
 	for _, m := range codeLineRe.FindAllStringSubmatch(string(data), -1) {
 		var date int64
-		fmt.Sscanf(m[1], "%d", &date)
+		_, _ = fmt.Sscanf(m[1], "%d", &date)
 		codes = append(codes, KPDCode{
 			Password:     m[3],
 			Label:        m[2],

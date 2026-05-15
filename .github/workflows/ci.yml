@@ -17,24 +17,20 @@ jobs:
       - run: go test -race -count=1 ./...
       - run: go vet ./...
 
-  # NOTE: lint job temporarily disabled — golangci-lint releases lag behind
-  # Go versions. v1.x is built with Go 1.24 and refuses to lint code targeting
-  # 1.26+; v2.x has breaking config changes. Re-enable once golangci-lint
-  # supports Go 1.26 cleanly. Tracked in memory/project_audit_followups.md.
-  # lint:
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - uses: actions/setup-go@v5
-  #       with:
-  #         go-version: '1.26'
-  #     - uses: golangci/golangci-lint-action@v8
-  #       with:
-  #         version: v2.12.2
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.12.2
 
   build:
     runs-on: ubuntu-latest
-    needs: [test]
+    needs: [test, lint]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

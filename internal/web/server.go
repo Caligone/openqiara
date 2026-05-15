@@ -1472,7 +1472,7 @@ const maxFbxhomePushBody = 64 << 10
 // Format du body observé : JSON avec une clé "notifications" (liste d'events).
 // Le contenu exact reste à confirmer empiriquement — on log tout en info.
 func (s *Server) handleFbxhomePush(w http.ResponseWriter, r *http.Request) {
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxFbxhomePushBody))
 	if err != nil {
 		s.log.Warn("fbxhome push: read body failed", "err", err)
@@ -1505,7 +1505,7 @@ func (s *Server) handleReboot(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(500 * time.Millisecond)
 		s.log.Info("rebooting camera...")
 		cmd := exec.Command("reboot")
-		cmd.Run()
+		_ = cmd.Run()
 	}()
 }
 
@@ -1514,7 +1514,7 @@ func (s *Server) handleReboot(w http.ResponseWriter, r *http.Request) {
 func writeJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(data)
+	_ = json.NewEncoder(w).Encode(data)
 }
 
 func writeErr(w http.ResponseWriter, status int, msg string) {
