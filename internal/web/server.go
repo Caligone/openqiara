@@ -18,6 +18,7 @@ import (
 
 	"github.com/caligone/openqiara/internal/camera"
 	"github.com/caligone/openqiara/internal/config"
+	"github.com/caligone/openqiara/internal/hlevents"
 )
 
 // MQTTCallbacks allows the web server to trigger publisher updates on sensor changes.
@@ -102,6 +103,11 @@ type Server struct {
 	// séquences sirène arbitraires). Désactivé par défaut — ces endpoints
 	// peuvent brick le MCU (opcodes 0x03, 0x08) ou stresser un capteur.
 	debugEnabled bool
+
+	// hlDispatcher route les events /events et notifs /notifications
+	// (poussés par hl_event_collectd, le proxy cloud Free) vers les
+	// publishers MQTT/HK. nil = on log seulement, pas de dispatch.
+	hlDispatcher *hlevents.Dispatcher
 }
 
 // pendingKPDCodeJob représente une écriture de code PIN en attente que le
@@ -162,6 +168,13 @@ func (s *Server) EnableDebugEndpoints() {
 	s.debugEnabled = true
 }
 
+// SetHLEventsDispatcher attache le dispatcher qui consomme les events
+// /events et /notifications poussés par hl_event_collectd. Si non
+// appelé, les bodies sont juste loggués sans traitement.
+func (s *Server) SetHLEventsDispatcher(d *hlevents.Dispatcher) {
+	s.hlDispatcher = d
+}
+
 // SetAlarmState updates the alarm state from an external source (e.g. KPD event).
 func (s *Server) SetAlarmState(state string) {
 	s.alarmMu.Lock()
@@ -209,11 +222,18 @@ func (s *Server) Start(addr string) error {
 	// Server-sent events stream (alarm, sensors, status).
 	mux.HandleFunc("GET /api/events", s.cors(s.handleEvents))
 
-	// Push depuis hl_event_collectd (intercepte le webhook cloud Free).
-	// Le DNS local résout *.srv.home-labs.fr → 127.0.0.1 ; fbxhome push
-	// ses events sur http://<camid>.srv.home-labs.fr/events. On accepte
-	// les POST sur /events sans auth (le hostname suffit comme garde).
+	// Push depuis hl_event_collectd (intercepte les webhooks cloud Free).
+	// Le DNS local résout *.srv.home-labs.fr → 127.0.0.1 ; le collectd
+	// pousse les events sur /events (sensor events, alarm transitions,
+	// shutter, etc.) et les notifications sur /notifications (IV events
+	// type human/pet detection). On accepte les POST sans auth — le
+	// hostname EUPID.srv.home-labs.fr résolu localement suffit comme garde.
+	//
+	// Si on répond autre chose que 200, hl_event_collectd met les events
+	// en queue retry et ne pousse plus rien d'autre tant que la queue n'est
+	// pas vidée — il faut donc handler les DEUX routes en 200 OK.
 	mux.HandleFunc("POST /events", s.handleFbxhomePush)
+	mux.HandleFunc("POST /notifications", s.handleFbxhomePush)
 	// CORS preflight
 	mux.HandleFunc("OPTIONS /api/", s.handleOptions)
 
@@ -350,7 +370,7 @@ func (s *Server) basicAuth(next http.Handler) http.Handler {
 
 		// Allow fbxhome push without auth — c'est un hook intra-cam,
 		// pas exposé sur le LAN (sauf si quelqu'un sait le hostname interne).
-		if r.Method == http.MethodPost && r.URL.Path == "/events" {
+		if r.Method == http.MethodPost && (r.URL.Path == "/events" || r.URL.Path == "/notifications") {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -1469,8 +1489,19 @@ const maxFbxhomePushBody = 64 << 10
 // envoyer au cloud Free. La réponse mime celle du cloud ({"result":"ok"})
 // pour qu'il considère la livraison comme réussie et ne retry pas.
 //
-// Format du body observé : JSON avec une clé "notifications" (liste d'events).
-// Le contenu exact reste à confirmer empiriquement — on log tout en info.
+// Deux routes câblées sur ce handler :
+//
+//   - POST /events        → body {"events":[{ts,ev:{type,...}}]}
+//   - POST /notifications → body {"notifications":[{ts,notif:{type,data}}]}
+//
+// Les events IV (IntelliVision: détection humain/pet) arrivent sur
+// /notifications avec type "iv_event". Les events sensor/alarm/shutter
+// arrivent sur /events. Pour l'instant on les loggue tous, et on dispatch
+// les iv_event vers s.ivDispatcher si attaché.
+//
+// CRITIQUE : doit répondre 200 sur les DEUX routes, sinon hl_event_collectd
+// met sa queue en retry et ne flush plus rien — on aurait des events qui
+// sortent au compte-gouttes.
 func (s *Server) handleFbxhomePush(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = r.Body.Close() }()
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxFbxhomePushBody))
@@ -1482,10 +1513,28 @@ func (s *Server) handleFbxhomePush(w http.ResponseWriter, r *http.Request) {
 
 	s.log.Info("fbxhome push received",
 		"host", r.Host,
+		"path", r.URL.Path,
 		"content_type", r.Header.Get("Content-Type"),
 		"body_len", len(body),
 		"body", string(body),
 	)
+
+	// Dispatch selon le path. Pas de fail-fast sur les erreurs de parse :
+	// on veut TOUJOURS répondre 200 pour que la queue se vide.
+	switch r.URL.Path {
+	case "/events":
+		if env, perr := hlevents.ParseEvents(body); perr == nil && s.hlDispatcher != nil {
+			for _, item := range env.Events {
+				s.hlDispatcher.HandleEvent(r.Context(), item)
+			}
+		}
+	case "/notifications":
+		if env, perr := hlevents.ParseNotifications(body); perr == nil && s.hlDispatcher != nil {
+			for _, item := range env.Notifications {
+				s.hlDispatcher.HandleNotification(r.Context(), item)
+			}
+		}
+	}
 
 	// Mime la réponse cloud Free pour que hl_event_collectd flush sa queue.
 	w.Header().Set("Content-Type", "application/json")
