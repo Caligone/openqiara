@@ -559,33 +559,62 @@ func (c *FbxhomeClient) TriggerSiren(ctx context.Context, sensorID int) error {
 	return c.EndpointsWrite(ctx, sensorID, eps)
 }
 
-// TriggerSirenAlarm fires the SRN siren as a wail.
+// TriggerSirenAlarm fires the SRN siren as a wail full-power.
 //
-// LIMITATION fbxhome standalone : les endpoints `test_power`/`test_duration`
-// sont read-only via /endpoints_write (fbxhome renvoie "Not allowed"
-// reason=5 — 200 OK HTTP avec body d'erreur), donc le wail garde les
-// valeurs internes par défaut (power=10, duration=10s). Le son est donc
-// le même que `TriggerSiren` (test discret).
+// On pousse `test_duration`, `test_power=100` puis `test=true` dans un
+// SEUL endpoints_write. fbxhome convertit en payload radio
+// `5505 01 PP DD` où PP=power et DD=duration en quarts de seconde
+// (cap radio = 255 quarts ≈ 63s ; au-delà la SRN tronque).
 //
-// Pour un vrai wail full-power, il faudrait soit passer par charmux,
-// soit que fbxhome soit dans son state interne `triggered` via
-// `set_alarm_status`. Non fait pour le moment.
+// L'API fbxhome attend les durations en SECONDES (pas en quarts) — la
+// conversion *4 est faite côté fbxhome. Cap pratique côté API : 63s.
 //
-// `duration` est conservé dans la signature pour compat future.
+// Découvert 2026-05-15 : la limitation "Not allowed reason=5" sur
+// test_power/test_duration observée en avril était un artefact de
+// l'ordre ou du state SRN. La combinaison correcte est validée audible
+// (cf. feedback_srn_wail_limit.md).
+//
+// Pour stop : appeler StopSiren (endpoints_write test=false suffit en
+// cas normal, reboot_srn en kill-switch).
 func (c *FbxhomeClient) TriggerSirenAlarm(ctx context.Context, sensorID int, duration time.Duration) error {
-	_ = duration
-	eps := []EndpointWriteEntry{{EPName: "test", Value: true}}
+	seconds := int(duration / time.Second)
+	if seconds <= 0 {
+		seconds = 10
+	}
+	if seconds > 63 {
+		seconds = 63
+	}
+
+	// Ordre IMPORTANT : test_duration et test_power AVANT test, sinon
+	// fbxhome ignore les nouveaux params et joue avec les valeurs courantes.
+	eps := []EndpointWriteEntry{
+		{EPName: "test_duration", Value: seconds},
+		{EPName: "test_power", Value: 100},
+		{EPName: "test", Value: true},
+	}
 	return c.EndpointsWrite(ctx, sensorID, eps)
 }
 
-// StopSiren stops an ongoing siren. fbxhome's endpoints_write false on
-// test/alarm_ring is accepted but ineffective once the alarm engine has
-// driven the SRN into ALERT_WITH_SRN. The reliable kill switch is the
-// fbxbus method reboot_srn — it forces the SRN to reboot and returns
-// to OFF state. Side effect: the SRN re-syncs (~5s) before being usable
-// again. Acceptable for an alarm stop.
+// StopSiren stops an ongoing siren.
+//
+// reboot_srn est le seul kill-switch fiable. `endpoints_write test=false`
+// a été testé 2026-05-15 et observé re-déclencher la trame radio
+// `5505 01 PP DD` au lieu de stopper — fbxhome semble bufferiser un
+// push en attente que le `false` ne purge pas.
+//
+// Side effect reboot_srn : la SRN passe par OFF + re-handshake (~5s)
+// avant d'être ré-utilisable. Acceptable pour un stop d'alarme.
+//
+// Cas dégradé : si reboot_srn échoue, on se contente d'écrire test=false
+// (best-effort) — au pire la SRN s'arrête d'elle-même au bout de
+// test_duration (max 63s).
 func (c *FbxhomeClient) StopSiren(ctx context.Context, sensorID int) error {
 	if _, err := c.runner.Run(ctx, "fbxbusctl", "call", "fbxhome", "reboot_srn"); err != nil {
+		// Best-effort fallback : tente test=false pour clear le buffer
+		// fbxhome. N'arrête PAS le wail en cours, mais limite la durée
+		// si update_status était encore en attente de push.
+		eps := []EndpointWriteEntry{{EPName: "test", Value: false}}
+		_ = c.EndpointsWrite(ctx, sensorID, eps)
 		return fmt.Errorf("reboot_srn: %w", err)
 	}
 	return nil

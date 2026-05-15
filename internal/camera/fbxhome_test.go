@@ -463,3 +463,85 @@ func TestClose_Idempotent(t *testing.T) {
 		t.Fatalf("second Close: %v", err)
 	}
 }
+
+// TriggerSirenAlarm doit pousser test_duration + test_power + test dans
+// CET ordre — fbxhome ignore les params si test=true arrive en premier.
+func TestTriggerSirenAlarm_OrderAndValues(t *testing.T) {
+	var got endpointsWriteRequest
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/home/endpoints_write", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"list":[{"node_id":32,"status":[]}]}`))
+	})
+	srv := newTestServer(t, mux)
+	defer srv.Close()
+	c := newTestClient(t, srv.URL)
+	_ = c.Connect(context.Background())
+
+	if err := c.TriggerSirenAlarm(context.Background(), 32, 30*time.Second); err != nil {
+		t.Fatalf("TriggerSirenAlarm: %v", err)
+	}
+
+	if len(got.List) != 1 || len(got.List[0].Endpoints) != 3 {
+		t.Fatalf("unexpected request: %+v", got)
+	}
+	eps := got.List[0].Endpoints
+	if eps[0].EPName != "test_duration" || eps[1].EPName != "test_power" || eps[2].EPName != "test" {
+		t.Errorf("wrong ep order: %s,%s,%s", eps[0].EPName, eps[1].EPName, eps[2].EPName)
+	}
+	// JSON décodage → float64 pour les nombres, bool pour test.
+	if v, _ := eps[0].Value.(float64); v != 30 {
+		t.Errorf("test_duration = %v, want 30", eps[0].Value)
+	}
+	if v, _ := eps[1].Value.(float64); v != 100 {
+		t.Errorf("test_power = %v, want 100", eps[1].Value)
+	}
+	if v, _ := eps[2].Value.(bool); !v {
+		t.Errorf("test = %v, want true", eps[2].Value)
+	}
+}
+
+// Cap supérieur : duration > 63s clampée à 63 (limite radio 255 quarts).
+func TestTriggerSirenAlarm_ClampDuration(t *testing.T) {
+	var got endpointsWriteRequest
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/home/endpoints_write", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"list":[{"node_id":32,"status":[]}]}`))
+	})
+	srv := newTestServer(t, mux)
+	defer srv.Close()
+	c := newTestClient(t, srv.URL)
+	_ = c.Connect(context.Background())
+
+	if err := c.TriggerSirenAlarm(context.Background(), 32, 5*time.Minute); err != nil {
+		t.Fatalf("TriggerSirenAlarm: %v", err)
+	}
+	if v, _ := got.List[0].Endpoints[0].Value.(float64); v != 63 {
+		t.Errorf("test_duration not clamped to 63 (got %v)", got.List[0].Endpoints[0].Value)
+	}
+}
+
+// Duration <= 0 → defaut 10s pour éviter un wail muet.
+func TestTriggerSirenAlarm_DefaultDuration(t *testing.T) {
+	var got endpointsWriteRequest
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/home/endpoints_write", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"list":[{"node_id":32,"status":[]}]}`))
+	})
+	srv := newTestServer(t, mux)
+	defer srv.Close()
+	c := newTestClient(t, srv.URL)
+	_ = c.Connect(context.Background())
+
+	if err := c.TriggerSirenAlarm(context.Background(), 32, 0); err != nil {
+		t.Fatalf("TriggerSirenAlarm: %v", err)
+	}
+	if v, _ := got.List[0].Endpoints[0].Value.(float64); v != 10 {
+		t.Errorf("default duration not 10 (got %v)", got.List[0].Endpoints[0].Value)
+	}
+}
