@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"os/exec"
 	"strconv"
@@ -366,10 +367,9 @@ func (s *Server) cors(next http.HandlerFunc) http.HandlerFunc {
 func (s *Server) basicAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cfg := s.store.Get()
-		password := cfg.Admin.Password
 
-		// No password configured → open access.
-		if password == "" {
+		// Pas d'auth configurée → accès ouvert.
+		if !cfg.Admin.AuthEnabled() {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -380,15 +380,22 @@ func (s *Server) basicAuth(next http.Handler) http.Handler {
 			return
 		}
 
-		// Allow fbxhome push without auth — c'est un hook intra-cam,
-		// pas exposé sur le LAN (sauf si quelqu'un sait le hostname interne).
+		// Allow fbxhome push without auth — mais STRICTEMENT depuis loopback.
+		// hl_event_collectd tourne sur la caméra elle-même et résout
+		// *.srv.home-labs.fr → 127.0.0.1 via dnsmasq local. Tout autre
+		// peer qui POST sur /events ou /notifications est suspect (LAN
+		// inconnu qui essaie d'injecter des events capteur ou IV).
 		if r.Method == http.MethodPost && (r.URL.Path == "/events" || r.URL.Path == "/notifications") {
-			next.ServeHTTP(w, r)
+			if isLoopbackRequest(r) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			http.Error(w, "loopback only", http.StatusForbidden)
 			return
 		}
 
 		user, pass, ok := r.BasicAuth()
-		if !ok || user != "admin" || pass != password {
+		if !ok || user != "admin" || !cfg.Admin.CheckPassword(pass) {
 			w.Header().Set("WWW-Authenticate", `Basic realm="OpenQiara"`)
 			http.Error(w, "Authentification requise", http.StatusUnauthorized)
 			return
@@ -402,6 +409,21 @@ func (s *Server) handleOptions(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// isLoopbackRequest tells whether the request was issued from 127.0.0.0/8
+// or ::1. r.RemoteAddr is the socket peer ; on n'a pas de proxy devant
+// openqiarad donc pas besoin de gérer X-Forwarded-For.
+func isLoopbackRequest(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	return ip.IsLoopback()
 }
 
 // --- Handlers ---
@@ -771,7 +793,7 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"mqtt":        masked,
 		"homekit":     cfg.HomeKit,
-		"admin":       map[string]any{"password_set": cfg.Admin.Password != ""},
+		"admin":       map[string]any{"password_set": cfg.Admin.AuthEnabled()},
 		"web":         map[string]any{"enabled": cfg.WebEnabled()},
 		"camera_mode": cameraMode,
 		"alarm": map[string]any{
@@ -944,16 +966,27 @@ func (s *Server) handleUpdateAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := s.store.Update(func(cfg *config.Config) {
-		cfg.Admin.Password = *body.Password
+	hash, err := config.HashAdminPassword(*body.Password)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "échec hash: "+err.Error())
+		return
+	}
+
+	err = s.store.Update(func(cfg *config.Config) {
+		cfg.Admin.PasswordHash = hash
+		// Vide systématiquement le champ legacy : si on est en train de
+		// définir un nouveau password, on ne veut surtout pas laisser
+		// l'ancien clair traîner.
+		cfg.Admin.Password = ""
 	})
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "échec sauvegarde: "+err.Error())
 		return
 	}
 
-	s.log.Info("admin password updated", "auth_enabled", *body.Password != "")
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "auth_enabled": *body.Password != ""})
+	authEnabled := *body.Password != ""
+	s.log.Info("admin password updated", "auth_enabled", authEnabled)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "auth_enabled": authEnabled})
 }
 
 func (s *Server) handleUpdateMQTT(w http.ResponseWriter, r *http.Request) {
@@ -1327,30 +1360,36 @@ func (s *Server) handleStartStream(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleHLSStream(w http.ResponseWriter, r *http.Request) {
-	// Serve HLS files from /tmp/out_stream/stream/
-	path := r.URL.Path[len("/stream/"):]
-	filePath := "/tmp/out_stream/stream/" + path
+	const streamRoot = "/tmp/out_stream/stream/"
+	// Whitelist d'extensions + interdiction des composants `..` / chemin
+	// absolu. Limite l'exposition même si Go nettoie déjà côté ServeFile :
+	// on n'autorise QUE les artefacts HLS produits par hlcamd/hls.
+	reqPath := r.URL.Path[len("/stream/"):]
+	if reqPath == "" || strings.Contains(reqPath, "..") || strings.HasPrefix(reqPath, "/") {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	switch {
+	case strings.HasSuffix(reqPath, ".m3u8"):
+		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+	case strings.HasSuffix(reqPath, ".m4s"), strings.HasSuffix(reqPath, ".ts"):
+		// hlcamd/hls écrit du MPEG-TS dans les .m4s malgré l'extension.
+		w.Header().Set("Content-Type", "video/mp2t")
+	default:
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
 
 	// Lazy healing : si la playlist principale n'a pas été touchée depuis
 	// >maxAge, déclencher un resume_streams avant de servir. La requête
 	// courante peut servir 404 si hlcamd n'a pas encore rattrapé, mais
 	// la suivante (iOS HK retry sous 2-5s) sera satisfaite.
-	if s.hlcamd != nil && strings.HasSuffix(path, ".m3u8") {
+	if s.hlcamd != nil && strings.HasSuffix(reqPath, ".m3u8") {
 		s.hlcamd.ResumeIfStale(r.Context())
 	}
 
-	// Set correct content types
-	switch {
-	case strings.HasSuffix(path, ".m3u8"):
-		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
-	case strings.HasSuffix(path, ".m4s"):
-		// hlcamd/hls writes MPEG-TS content with .m4s extension
-		w.Header().Set("Content-Type", "video/mp2t")
-	case strings.HasSuffix(path, ".ts"):
-		w.Header().Set("Content-Type", "video/mp2t")
-	}
 	w.Header().Set("Cache-Control", "no-cache")
-	http.ServeFile(w, r, filePath)
+	http.ServeFile(w, r, streamRoot+reqPath)
 }
 
 func (s *Server) handleSirenTest(w http.ResponseWriter, r *http.Request) {

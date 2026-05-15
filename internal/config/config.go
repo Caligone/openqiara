@@ -2,13 +2,21 @@
 package config
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"sync"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 )
+
+// adminBcryptCost = cost bcrypt pour le hash du password admin. 10 reste
+// sous les ~100ms sur ARMv7 (cam Qiara) et est largement suffisant pour
+// un usage LAN-trusted. À augmenter si on industrialise.
+const adminBcryptCost = 10
 
 // Config is the root configuration persisted to disk.
 type Config struct {
@@ -159,12 +167,62 @@ type MQTTConfig struct {
 	TopicPrefix string `json:"topic_prefix,omitempty"`
 }
 
-// AdminConfig holds web UI access settings.
 // AdminConfig holds web UI admin credentials.
-// If Password is empty, the web UI is accessible without authentication.
-// Username is fixed to "admin" (not configurable).
+// Si PasswordHash et Password sont tous les deux vides, l'UI est ouverte.
+// Username fixe = "admin" (non configurable).
+//
+// Password (clair) est conservé uniquement pour la migration : si on
+// trouve un config legacy au boot avec Password set et PasswordHash vide,
+// on hash et on vide Password. Une fois la migration faite, ce champ ne
+// devrait jamais être réécrit.
 type AdminConfig struct {
+	// PasswordHash est le hash bcrypt du mot de passe. Vide = pas d'auth.
+	PasswordHash string `json:"password_hash,omitempty"`
+
+	// Password (deprecated) est l'ancien champ en clair. Migré au boot vers
+	// PasswordHash puis effacé. Ne JAMAIS écrire ce champ depuis le code
+	// applicatif — passer par SetAdminPassword.
 	Password string `json:"password,omitempty"`
+}
+
+// AuthEnabled retourne true ssi un password est configuré (hash ou legacy
+// clair en attendant la migration).
+func (a AdminConfig) AuthEnabled() bool {
+	return a.PasswordHash != "" || a.Password != ""
+}
+
+// CheckPassword vérifie un password candidat contre le hash configuré.
+// Utilise bcrypt.CompareHashAndPassword qui est constant-time.
+//
+// Fallback transitoire : si PasswordHash est vide mais Password (clair)
+// est set, on compare en clair via subtle. Ce chemin n'est emprunté
+// qu'entre le chargement du config legacy et la migration au prochain
+// Save() — cf. migrateAdminPassword.
+func (a AdminConfig) CheckPassword(candidate string) bool {
+	if a.PasswordHash != "" {
+		return bcrypt.CompareHashAndPassword([]byte(a.PasswordHash), []byte(candidate)) == nil
+	}
+	if a.Password != "" {
+		// Window très étroit (entre Load et premier Save migré).
+		// subtle.ConstantTimeCompare retourne 0 si longueurs différentes
+		// sans short-circuit, OK pour notre cas.
+		return subtle.ConstantTimeCompare([]byte(a.Password), []byte(candidate)) == 1
+	}
+	return false
+}
+
+// HashAdminPassword génère un hash bcrypt pour le password donné. Le
+// caller doit ensuite l'affecter à AdminConfig.PasswordHash et vider
+// AdminConfig.Password.
+func HashAdminPassword(plaintext string) (string, error) {
+	if plaintext == "" {
+		return "", nil
+	}
+	h, err := bcrypt.GenerateFromPassword([]byte(plaintext), adminBcryptCost)
+	if err != nil {
+		return "", fmt.Errorf("hash admin password: %w", err)
+	}
+	return string(h), nil
 }
 
 // SensorEntry holds a paired sensor's persistent data.
@@ -227,10 +285,31 @@ func (s *Store) Load() error {
 	if err := json.Unmarshal(data, &s.cfg); err != nil {
 		return fmt.Errorf("parse config: %w", err)
 	}
+
+	// Migration legacy : si on a un password en clair (ancien schéma)
+	// et pas de hash, on hash maintenant. Le Save() est différé jusqu'à
+	// la prochaine mutation pour éviter d'écrire au boot sur disque ;
+	// l'admin actuel reste opérationnel via le fallback CheckPassword.
+	// Le boot suivant après n'importe quelle Update() persistera la
+	// migration définitivement.
+	if s.cfg.Admin.Password != "" && s.cfg.Admin.PasswordHash == "" {
+		if hash, err := HashAdminPassword(s.cfg.Admin.Password); err == nil {
+			s.cfg.Admin.PasswordHash = hash
+			s.cfg.Admin.Password = ""
+		}
+		// Si HashAdminPassword échoue (très improbable), on garde
+		// Password en clair : l'auth continue de fonctionner via le
+		// fallback CheckPassword.
+	}
 	return nil
 }
 
 // Save writes the current configuration to disk.
+//
+// Note sécurité : le fichier contient un hash bcrypt + tokens MQTT en
+// clair. 0600 serait préférable mais le binaire tourne en root sur la
+// cam donc 0644 ne change pas grand-chose vs autres users (il n'y en a
+// qu'un). À durcir si on industrialise.
 func (s *Store) Save() error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -239,7 +318,7 @@ func (s *Store) Save() error {
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
 	}
-	if err := os.WriteFile(s.path, data, 0644); err != nil {
+	if err := os.WriteFile(s.path, data, 0600); err != nil {
 		return fmt.Errorf("write config: %w", err)
 	}
 	return nil

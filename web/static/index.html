@@ -337,6 +337,34 @@ a { color: var(--primary); }
 <script>
 const API = '';
 
+// Escape HTML special chars before injection in innerHTML. À utiliser pour
+// TOUT contenu venant du serveur (labels capteurs, codes, messages d'erreur)
+// avant de l'interpoler dans un template literal. Sans ça, un label sensor
+// type `<img src=x onerror=...>` exécute du JS dans la session admin.
+function escapeHTML(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// Variante pour insertion dans une string JS littérale (ex onclick=`fn('${...}')`).
+// Bloque les caractères qui sortent du quote ou injectent un script.
+function escapeJSString(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/"/g, '\\"')
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r');
+}
+
 // --- Tabs ---
 document.querySelectorAll('.tab').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -657,7 +685,7 @@ async function fetchCodes() {
     const r = await fetch(API + '/api/codes');
     const d = await r.json();
     if (d.error) {
-      list.innerHTML = '<div class="msg info">' + d.error + '</div>';
+      list.innerHTML = '<div class="msg info">' + escapeHTML(d.error) + '</div>';
       return;
     }
     if (!d.code) {
@@ -669,8 +697,8 @@ async function fetchCodes() {
     list.innerHTML = `
       <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--surface);border-radius:6px;border:1px solid var(--border)">
         <div>
-          <span style="font-weight:500">${d.code.label || 'Code'}</span>
-          <span style="color:var(--text-muted);margin-left:8px;font-family:monospace">${d.code.password}</span>
+          <span style="font-weight:500">${escapeHTML(d.code.label || 'Code')}</span>
+          <span style="color:var(--text-muted);margin-left:8px;font-family:monospace">${escapeHTML(d.code.password)}</span>
         </div>
         <button class="btn-icon" onclick="deleteCode()" title="Supprimer">🗑️</button>
       </div>`;
@@ -1045,17 +1073,19 @@ function renderSensors(sensors) {
     const nAlarm = s.night_alarm !== false ? 'checked' : '';
     const dTimed = s.day_timed !== false ? 'checked' : '';
     const nTimed = s.night_timed !== false ? 'checked' : '';
+    const safeLabel = escapeHTML(s.label || (s.type + ' #' + s.id));
+    const safeLabelJS = escapeJSString(s.label || '');
     return `
       <div class="card">
         <div class="sensor-row">
           <span class="sensor-icon">${sensorIcon(s.type)}</span>
           <div style="flex:1">
             <div class="card-header">
-              <span class="card-title">${s.label || (s.type + ' #' + s.id)}</span>
+              <span class="card-title">${safeLabel}</span>
               <div style="display:flex;align-items:center;gap:8px">
                 <span class="sensor-state ${sensorStateClass(s)}">${sensorStateLabel(s)}</span>
                 ${s.type === 'SRN' ? `<button class="btn-icon" onclick="testSiren()" title="Test sirène">🔔</button>` : ''}
-                <button class="btn-icon" onclick="renameSensor(${s.id}, '${(s.label||'').replace(/'/g,"\\'")}')" title="Renommer">✏️</button>
+                <button class="btn-icon" onclick="renameSensor(${s.id}, '${safeLabelJS}')" title="Renommer">✏️</button>
                 <button class="btn-icon" onclick="deleteSensor(${s.id})" title="Supprimer">🗑️</button>
               </div>
             </div>
