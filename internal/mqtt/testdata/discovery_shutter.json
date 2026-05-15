@@ -1,0 +1,20 @@
+{
+  "payload": {
+    "name": "OpenQiara Shutter",
+    "unique_id": "openqiara_shutter",
+    "state_topic": "openqiara/shutter/state",
+    "command_topic": "openqiara/shutter/set",
+    "value_template": "{{ value_json.state }}",
+    "payload_on": "open",
+    "payload_off": "closed",
+    "device": {
+      "identifiers": [
+        "openqiara_camera"
+      ],
+      "name": "OpenQiara Caméra",
+      "manufacturer": "Qiara/Cofidur",
+      "model": "HOMELABCAM"
+    }
+  },
+  "topic": "homeassistant/switch/openqiara_shutter/config"
+}

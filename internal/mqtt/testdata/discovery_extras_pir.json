@@ -1,0 +1,40 @@
+[
+  {
+    "topic": "homeassistant/sensor/openqiara_20_battery/config",
+    "payload": {
+      "device": {
+        "identifiers": [
+          "openqiara_20"
+        ],
+        "manufacturer": "Qiara/Cofidur",
+        "model": "HOMELABPIR",
+        "name": "OpenQiara PIR 20"
+      },
+      "device_class": "battery",
+      "json_attributes_topic": "openqiara/sensor/20/state",
+      "name": "OpenQiara PIR 20 Batterie",
+      "state_topic": "openqiara/sensor/20/state",
+      "unique_id": "openqiara_pir_20_battery",
+      "value_template": "{{ value_json.battery }}"
+    }
+  },
+  {
+    "topic": "homeassistant/sensor/openqiara_20_temperature/config",
+    "payload": {
+      "device": {
+        "identifiers": [
+          "openqiara_20"
+        ],
+        "manufacturer": "Qiara/Cofidur",
+        "model": "HOMELABPIR",
+        "name": "OpenQiara PIR 20"
+      },
+      "device_class": "temperature",
+      "json_attributes_topic": "openqiara/sensor/20/state",
+      "name": "OpenQiara PIR 20 Température",
+      "state_topic": "openqiara/sensor/20/state",
+      "unique_id": "openqiara_pir_20_temperature",
+      "value_template": "{{ value_json.temperature }}"
+    }
+  }
+]

@@ -1,0 +1,40 @@
+[
+  {
+    "topic": "homeassistant/sensor/openqiara_14_battery/config",
+    "payload": {
+      "device": {
+        "identifiers": [
+          "openqiara_14"
+        ],
+        "manufacturer": "Qiara/Cofidur",
+        "model": "HOMELABDWS",
+        "name": "OpenQiara DWS 14"
+      },
+      "device_class": "battery",
+      "json_attributes_topic": "openqiara/sensor/14/state",
+      "name": "OpenQiara DWS 14 Batterie",
+      "state_topic": "openqiara/sensor/14/state",
+      "unique_id": "openqiara_dws_14_battery",
+      "value_template": "{{ value_json.battery }}"
+    }
+  },
+  {
+    "topic": "homeassistant/sensor/openqiara_14_temperature/config",
+    "payload": {
+      "device": {
+        "identifiers": [
+          "openqiara_14"
+        ],
+        "manufacturer": "Qiara/Cofidur",
+        "model": "HOMELABDWS",
+        "name": "OpenQiara DWS 14"
+      },
+      "device_class": "temperature",
+      "json_attributes_topic": "openqiara/sensor/14/state",
+      "name": "OpenQiara DWS 14 Température",
+      "state_topic": "openqiara/sensor/14/state",
+      "unique_id": "openqiara_dws_14_temperature",
+      "value_template": "{{ value_json.temperature }}"
+    }
+  }
+]

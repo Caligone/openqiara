@@ -1,0 +1,19 @@
+{
+  "name": "Porte d'entrée",
+  "unique_id": "openqiara_dws_14",
+  "device_class": "opening",
+  "state_topic": "openqiara/sensor/14/state",
+  "value_template": "{{ value_json.open | lower }}",
+  "payload_on": "true",
+  "payload_off": "false",
+  "json_attributes_topic": "openqiara/sensor/14/state",
+  "json_attributes_template": "{\"battery\": {{ value_json.battery }}, \"temperature\": {{ value_json.temperature }}, \"reachable\": {{ value_json.reachable | lower }}}",
+  "device": {
+    "identifiers": [
+      "openqiara_14"
+    ],
+    "name": "Porte d'entrée",
+    "manufacturer": "Qiara/Cofidur",
+    "model": "HOMELABDWS"
+  }
+}

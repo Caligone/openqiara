@@ -1,0 +1,40 @@
+[
+  {
+    "topic": "homeassistant/sensor/openqiara_29_battery/config",
+    "payload": {
+      "device": {
+        "identifiers": [
+          "openqiara_29"
+        ],
+        "manufacturer": "Qiara/Cofidur",
+        "model": "HOMELABKPD",
+        "name": "OpenQiara KPD 29"
+      },
+      "device_class": "battery",
+      "json_attributes_topic": "openqiara/sensor/29/state",
+      "name": "OpenQiara KPD 29 Batterie",
+      "state_topic": "openqiara/sensor/29/state",
+      "unique_id": "openqiara_kpd_29_battery",
+      "value_template": "{{ value_json.battery }}"
+    }
+  },
+  {
+    "topic": "homeassistant/sensor/openqiara_29_temperature/config",
+    "payload": {
+      "device": {
+        "identifiers": [
+          "openqiara_29"
+        ],
+        "manufacturer": "Qiara/Cofidur",
+        "model": "HOMELABKPD",
+        "name": "OpenQiara KPD 29"
+      },
+      "device_class": "temperature",
+      "json_attributes_topic": "openqiara/sensor/29/state",
+      "name": "OpenQiara KPD 29 Température",
+      "state_topic": "openqiara/sensor/29/state",
+      "unique_id": "openqiara_kpd_29_temperature",
+      "value_template": "{{ value_json.temperature }}"
+    }
+  }
+]

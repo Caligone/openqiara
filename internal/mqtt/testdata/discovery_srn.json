@@ -1,0 +1,19 @@
+{
+  "name": "Sirène",
+  "unique_id": "openqiara_srn_32",
+  "state_topic": "openqiara/sensor/32/state",
+  "command_topic": "openqiara/siren/32/set",
+  "value_template": "{{ value_json.active | lower }}",
+  "payload_on": "true",
+  "payload_off": "false",
+  "json_attributes_topic": "openqiara/sensor/32/state",
+  "json_attributes_template": "{\"battery\": {{ value_json.battery }}, \"temperature\": {{ value_json.temperature }}, \"reachable\": {{ value_json.reachable | lower }}}",
+  "device": {
+    "identifiers": [
+      "openqiara_32"
+    ],
+    "name": "Sirène",
+    "manufacturer": "Qiara/Cofidur",
+    "model": "HOMELABSRN"
+  }
+}
