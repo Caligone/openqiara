@@ -308,112 +308,12 @@ func main() {
 		}
 		return alarm.SensorConfig{}
 	}
-	// handleSirenForAlarmState pilote la sirène physique lors des
-	// transitions d'état de la centrale d'alarme. Appelé depuis les
-	// deux modes (standalone via alarmStateCallback, alarmo via MQTT).
-	// Goroutine-safe : lance les commandes SRN dans une goroutine pour
-	// ne pas bloquer le caller (lock alarm engine ou handler MQTT).
-	sirenReady := false // skip the initial disarmed callback at boot
-	handleSirenForAlarmState := func(newState, prevState string) {
-		if newState == prevState {
-			return
-		}
-		// The alarm engine emits "disarmed" at boot — don't beep for that.
-		if !sirenReady {
-			sirenReady = true
-			if newState == "disarmed" {
-				return
-			}
-		}
-		mode := store.Get().SirenSoundsMode()
-
-		findSRN := func() int {
-			for _, s := range cam.CachedSensors() {
-				if s.Type == "SRN" {
-					return s.ID
-				}
-			}
-			return 0
-		}
-
-		// "none" must still cut a running wail (otherwise the user has no
-		// way to silence it after toggling to none). It also intercepts
-		// "triggered" to kill the SRN immediately before it ramps up.
-		if mode == "none" {
-			go func() {
-				if addr := findSRN(); addr != 0 {
-					_ = cam.StopSiren(ctx, addr)
-				}
-			}()
-			return
-		}
-
-		// In charmux mode we have dedicated arm/disarm beeps via raw 55 04
-		// frames; in fbxhome mode we only have the test/alarm_ring endpoints
-		// so the "beep" is the same test sound — accepted compromise.
-		cc, isCharmux := cam.(*camera.CharmuxClient)
-
-		switch newState {
-		case "arming":
-			if mode != "all" {
-				return
-			}
-			go func() {
-				addr := findSRN()
-				if addr == 0 {
-					return
-				}
-				logger.Info("siren: arming beep", "addr", addr)
-				var err error
-				if isCharmux {
-					err = cc.SendSirenBeep(ctx, addr)
-				} else {
-					err = cam.TriggerSiren(ctx, addr)
-				}
-				if err != nil {
-					logger.Error("siren: arming beep failed", "error", err)
-				}
-			}()
-
-		case "triggered":
-			go func() {
-				addr := findSRN()
-				if addr == 0 {
-					return
-				}
-				wail := store.Get().WailDuration()
-				logger.Warn("siren: ALARM TRIGGERED — firing wail", "addr", addr, "duration", wail)
-				if err := cam.TriggerSirenAlarm(ctx, addr, wail); err != nil {
-					logger.Error("siren: wail failed", "error", err)
-				}
-			}()
-
-		case "disarmed":
-			go func() {
-				addr := findSRN()
-				if addr == 0 {
-					return
-				}
-				logger.Info("siren: disarm — sending stop", "addr", addr)
-				if err := cam.StopSiren(ctx, addr); err != nil {
-					logger.Error("siren: stop failed", "error", err)
-				}
-				if mode == "all" {
-					// Disarm beep — only available as dedicated tone in charmux.
-					if isCharmux {
-						disarmBeep := []byte{
-							0x01, 0x55, 0x04, 0x1e, 0x1e, 0x96, 0x05, 0x64, 0x03,
-							0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03,
-							0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03,
-						}
-						_ = cc.SendSirenDebug(ctx, addr, disarmBeep, true, true, 3400)
-					} else {
-						_ = cam.TriggerSiren(ctx, addr)
-					}
-				}
-			}()
-		}
-	}
+	// sirenCtrl pilote la sirène physique lors des transitions d'état de
+	// la centrale d'alarme. Appelé depuis les deux modes (standalone via
+	// alarmStateCallback, alarmo via MQTT). Logique testée dans
+	// siren_controller_test.go.
+	sirenCtrl := newSirenController(ctx, cam, store, logger)
+	handleSirenForAlarmState := sirenCtrl.Handle
 
 	alarmStateCallback := func(snap alarm.Snapshot) {
 		logger.Info("alarm state", "state", snap.State, "prev", snap.PreviousState, "trigger", snap.TriggeredBy, "remaining", snap.TimerRemaining)
