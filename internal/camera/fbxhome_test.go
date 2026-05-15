@@ -206,6 +206,71 @@ func TestReadSensor_ReauthOn401(t *testing.T) {
 	}
 }
 
+// 400 reason=4 = session fbxhome expirée (vendor quirk, vu après ~heures
+// d'uptime). Doit déclencher la même logique de re-auth que 401/403.
+func TestReadSensor_ReauthOn400Reason4(t *testing.T) {
+	calls := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/home/endpoints_read", func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"message":"Authentication failed","reason":4}`))
+			return
+		}
+		resp := endpointsReadResponse{
+			List: []endpointResult{{
+				NodeID:   33,
+				EPValues: []endpointValue{{EPName: "state", Value: true}},
+			}},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	})
+
+	srv := newTestServer(t, mux)
+	defer srv.Close()
+
+	c := newTestClient(t, srv.URL)
+	_ = c.Connect(context.Background())
+
+	s, err := c.ReadSensor(context.Background(), 33, []string{"state"})
+	if err != nil {
+		t.Fatalf("ReadSensor after 400 reason=4: %v", err)
+	}
+	if !s.Open {
+		t.Error("expected Open=true after reauth")
+	}
+	if calls != 2 {
+		t.Errorf("expected 2 calls, got %d", calls)
+	}
+}
+
+// 400 avec reason!=4 = autre erreur applicative ; ne doit PAS re-auth, juste
+// remonter l'erreur telle quelle.
+func TestReadSensor_NoReauthOn400OtherReason(t *testing.T) {
+	calls := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/home/endpoints_read", func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"message":"Node not found","reason":7}`))
+	})
+
+	srv := newTestServer(t, mux)
+	defer srv.Close()
+
+	c := newTestClient(t, srv.URL)
+	_ = c.Connect(context.Background())
+
+	_, err := c.ReadSensor(context.Background(), 33, []string{"state"})
+	if err == nil {
+		t.Fatal("expected error on 400 reason=7")
+	}
+	if calls != 1 {
+		t.Errorf("expected 1 call (no retry), got %d", calls)
+	}
+}
+
 func TestStartPairing(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/home/pairing", func(w http.ResponseWriter, r *http.Request) {

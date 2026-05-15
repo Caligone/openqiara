@@ -45,8 +45,19 @@ type HomeKitCamera struct {
 	log *slog.Logger
 	acc *accessory.Camera
 
+	// hlcamdResumer (optionnel) réveille hlcamd via fbxbusctl si la
+	// playlist HLS est stale au moment où iOS ouvre la session live.
+	// nil = pas de healing, on lit ce qui est sur disque.
+	hlcamdResumer *camera.HlcamdResumer
+
 	mu       sync.Mutex
 	sessions map[string]*cameraSession // keyed by session id (base64)
+}
+
+// SetHlcamdResumer attache le helper de réveil hlcamd. Doit être appelé
+// avant la première session HK ; safe à appeler une seule fois au boot.
+func (c *HomeKitCamera) SetHlcamdResumer(r *camera.HlcamdResumer) {
+	c.hlcamdResumer = r
 }
 
 // cameraSession tracks the state of a single live-streaming session
@@ -401,6 +412,13 @@ func (c *HomeKitCamera) startStreaming(sess *cameraSession, videoPT, audioPT uin
 		defer sess.wg.Done()
 		audioSender.RunSilence(ctx)
 	}()
+
+	// Wake hlcamd if the pipeline is stale before consuming chunks.
+	// iOS HK retries fast if the first segments aren't ready, donc le
+	// resume issued here aura le temps de produire avant le 2e fetch.
+	if c.hlcamdResumer != nil {
+		c.hlcamdResumer.ResumeIfStale(ctx)
+	}
 
 	// HLS watcher → chunks
 	watcher := camera.NewHLSWatcher(c.cfg.HLSPath, c.log)

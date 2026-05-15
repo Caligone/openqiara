@@ -333,6 +333,23 @@ func main() {
 		logger.Info("hl_event_collectd dispatcher attached", "iv_kinds", []string{"human", "pet"})
 	}
 
+	// Lazy healing du pipeline HLS : hlcamd freeze silencieusement après
+	// quelques heures (cf. feedback_hlcamd_freeze_after_hours.md). On
+	// instancie un resumer partagé qui sera consulté à chaque requête
+	// video (UI web + ouverture session HK) — pas de watchdog.
+	// HLSPath par défaut si non configuré : voir homekit_camera.go.
+	hlsPath := cfg.HomeKit.Camera.HLSPath
+	if hlsPath == "" {
+		hlsPath = "/tmp/out_stream/stream/720p/HLS_TEST.m3u8"
+	}
+	hlcamdResumer := camera.NewHlcamdResumer(hlsPath, 10*time.Second, 5*time.Second, logger)
+	if webSrv != nil {
+		webSrv.SetHlcamdResumer(hlcamdResumer)
+	}
+	if hkPub != nil && hkPub.Camera() != nil {
+		hkPub.Camera().SetHlcamdResumer(hlcamdResumer)
+	}
+
 	// Alarm engine — standalone state machine for arm/disarm/triggered logic.
 	// Config provider reads night_mode from the config store on each query.
 	// alarmConfigFor mappe la config sensor vers le format attendu par

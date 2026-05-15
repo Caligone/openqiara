@@ -223,6 +223,33 @@ func (c *FbxhomeClient) Sensors(ctx context.Context) ([]Sensor, error) {
 	return sensors, nil
 }
 
+// shouldReauth returns true if the response indicates an expired session.
+// fbxhome can signal this in two ways :
+//   - 401 Unauthorized or 403 Forbidden (HTTP standard)
+//   - 400 Bad Request with a JSON body containing `"reason":4` (vendor quirk,
+//     vu après quelques heures d'uptime — la session X-Hlcore-Session-Id
+//     expire silencieusement et fbxhome répond 400 sans WWW-Authenticate)
+//
+// Quand on détecte le 400 reason=4, on consomme le body — l'appelant doit
+// utiliser le body retourné pour les fallbacks d'erreur (sinon il aurait
+// un body déjà drainé).
+func shouldReauth(resp *http.Response) (reauth bool, consumed []byte) {
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return true, nil
+	}
+	if resp.StatusCode == http.StatusBadRequest {
+		body, _ := io.ReadAll(resp.Body)
+		var probe struct {
+			Reason int `json:"reason"`
+		}
+		if json.Unmarshal(body, &probe) == nil && probe.Reason == 4 {
+			return true, body
+		}
+		return false, body
+	}
+	return false, nil
+}
+
 // ReadSensor reads endpoint values for a single sensor.
 func (c *FbxhomeClient) ReadSensor(ctx context.Context, nodeID int, endpoints []string) (*Sensor, error) {
 	body := endpointsReadRequest{
@@ -246,8 +273,7 @@ func (c *FbxhomeClient) ReadSensor(ctx context.Context, nodeID int, endpoints []
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	// Re-auth on 401/403 and retry once.
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+	if reauth, _ := shouldReauth(resp); reauth {
 		_ = resp.Body.Close()
 		if err := c.authenticate(ctx); err != nil {
 			return nil, fmt.Errorf("re-auth after %d: %w", resp.StatusCode, err)
@@ -296,7 +322,7 @@ func (c *FbxhomeClient) EndpointsRead(ctx context.Context, nodeID int, endpoints
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+	if reauth, _ := shouldReauth(resp); reauth {
 		_ = resp.Body.Close()
 		if err := c.authenticate(ctx); err != nil {
 			return nil, fmt.Errorf("re-auth: %w", err)
@@ -352,7 +378,7 @@ func (c *FbxhomeClient) EndpointsWrite(ctx context.Context, nodeID int, eps []En
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+	if reauth, _ := shouldReauth(resp); reauth {
 		_ = resp.Body.Close()
 		if err := c.authenticate(ctx); err != nil {
 			return fmt.Errorf("re-auth: %w", err)
@@ -361,6 +387,11 @@ func (c *FbxhomeClient) EndpointsWrite(ctx context.Context, nodeID int, eps []En
 	}
 
 	// fbxhome répond 200 OK même sur "Not allowed" — sniffer la réponse.
+	// shouldReauth peut avoir drainé le body sur un 400 reason!=4 ; dans ce
+	// cas io.ReadAll renvoie 0 byte (Close idempotent), donc la heuristique
+	// "reason+message" tombera silencieusement à false — ce cas reste géré
+	// par la branche StatusCode != 200 manquante ici (fbxhome répond 200
+	// même sur reject, donc on ne perd rien).
 	respBody, _ := io.ReadAll(resp.Body)
 	if bytes.Contains(respBody, []byte(`"reason"`)) && bytes.Contains(respBody, []byte(`"message"`)) {
 		return fmt.Errorf("endpoints_write rejected: %s", bytes.TrimSpace(respBody))

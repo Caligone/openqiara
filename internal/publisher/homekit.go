@@ -84,6 +84,13 @@ type HomeKitPublisher struct {
 	camera   *HomeKitCamera // optional, nil unless cfg.Camera.Enabled
 }
 
+// Camera returns the HomeKitCamera handle, or nil if the camera wasn't
+// enabled in config. Used by main.go to inject the hlcamd resumer after
+// Start.
+func (p *HomeKitPublisher) Camera() *HomeKitCamera {
+	return p.camera
+}
+
 // NewHomeKitPublisher creates a new HomeKit publisher.
 func NewHomeKitPublisher(cfg HomeKitConfig, logger *slog.Logger) *HomeKitPublisher {
 	if logger == nil {

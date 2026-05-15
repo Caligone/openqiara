@@ -108,6 +108,11 @@ type Server struct {
 	// (poussés par hl_event_collectd, le proxy cloud Free) vers les
 	// publishers MQTT/HK. nil = on log seulement, pas de dispatch.
 	hlDispatcher *hlevents.Dispatcher
+
+	// hlcamd permet le lazy healing du pipeline HLS (resume_streams si la
+	// playlist n'est pas écrite depuis >maxAge). nil = pas de healing,
+	// /api/stream/start fait un resume direct par exec.Command.
+	hlcamd *camera.HlcamdResumer
 }
 
 // pendingKPDCodeJob représente une écriture de code PIN en attente que le
@@ -173,6 +178,13 @@ func (s *Server) EnableDebugEndpoints() {
 // appelé, les bodies sont juste loggués sans traitement.
 func (s *Server) SetHLEventsDispatcher(d *hlevents.Dispatcher) {
 	s.hlDispatcher = d
+}
+
+// SetHlcamdResumer attache le helper de lazy healing du pipeline HLS.
+// Si non appelé, /api/stream/start exec fbxbusctl directement et les
+// requêtes GET /stream/ ne tentent aucun resume.
+func (s *Server) SetHlcamdResumer(h *camera.HlcamdResumer) {
+	s.hlcamd = h
 }
 
 // SetAlarmState updates the alarm state from an external source (e.g. KPD event).
@@ -1291,11 +1303,20 @@ func (s *Server) handleStartStream(w http.ResponseWriter, r *http.Request) {
 		s.log.Warn("shutter open failed (continuing)", "error", err)
 	}
 
-	// Activate HLS streams
-	cmd := exec.Command("fbxbusctl", "call", "hlcamd", "resume_streams")
-	if err := cmd.Run(); err != nil {
-		writeErr(w, http.StatusInternalServerError, "échec activation flux: "+err.Error())
-		return
+	// Activate HLS streams. Si on a un resumer câblé, on passe par lui
+	// (cooldown + log structuré). Sinon fallback exec direct.
+	if s.hlcamd != nil {
+		if err := s.hlcamd.ForceResume(r.Context()); err != nil {
+			// Skipped (cooldown/inflight) n'est pas une erreur fatale —
+			// hlcamd a probablement déjà été réveillé il y a <Xs.
+			s.log.Debug("resume skipped on stream start", "error", err)
+		}
+	} else {
+		cmd := exec.Command("fbxbusctl", "call", "hlcamd", "resume_streams")
+		if err := cmd.Run(); err != nil {
+			writeErr(w, http.StatusInternalServerError, "échec activation flux: "+err.Error())
+			return
+		}
 	}
 	s.log.Info("video stream started")
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -1309,6 +1330,14 @@ func (s *Server) handleHLSStream(w http.ResponseWriter, r *http.Request) {
 	// Serve HLS files from /tmp/out_stream/stream/
 	path := r.URL.Path[len("/stream/"):]
 	filePath := "/tmp/out_stream/stream/" + path
+
+	// Lazy healing : si la playlist principale n'a pas été touchée depuis
+	// >maxAge, déclencher un resume_streams avant de servir. La requête
+	// courante peut servir 404 si hlcamd n'a pas encore rattrapé, mais
+	// la suivante (iOS HK retry sous 2-5s) sera satisfaite.
+	if s.hlcamd != nil && strings.HasSuffix(path, ".m3u8") {
+		s.hlcamd.ResumeIfStale(r.Context())
+	}
 
 	// Set correct content types
 	switch {
