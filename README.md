@@ -1,7 +1,7 @@
 # OpenQiara
 
 Un remplaçant 100% local de la couche applicative cloud des caméras de sécurité
-[Qiara](https://www.qiara.com).
+Qiara.
 
 Qiara était une startup française d'alarme-caméra qui a coupé ses serveurs,
 laissant ses clients avec des appareils briqués. OpenQiara les remet en service
