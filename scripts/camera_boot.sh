@@ -11,6 +11,49 @@
 # manually so uartboot picks up the correct firmware.
 touch /data/bridge
 
+# Capture the WiFi association of this boot into /data/boot_wifi.log.
+# Overwritten each boot (last-boot-only) so install issues are easy to
+# inspect via SSH/serial without log rotation concerns. Runs in background
+# so it doesn't delay the rest of boot.
+(
+    exec > /data/boot_wifi.log 2>&1
+    echo "=== boot_wifi $(date -Iseconds 2>/dev/null || date) ==="
+    SSID_FILE=/data/wifi_ssid
+    if [ -f "$SSID_FILE" ]; then
+        echo "configured SSID: $(cat $SSID_FILE)"
+        echo "SSID bytes: $(wc -c < $SSID_FILE)  PASS bytes: $(wc -c < /data/wifi_pass 2>/dev/null || echo '?')"
+    else
+        echo "WARN: /data/wifi_ssid missing"
+    fi
+    # Wait up to 60s for the ssv0 interface to appear and associate.
+    for i in $(seq 1 30); do
+        if [ -d /sys/class/net/ssv0 ]; then
+            echo "[+${i}x2s] ssv0 present"
+            break
+        fi
+        sleep 2
+    done
+    if [ ! -d /sys/class/net/ssv0 ]; then
+        echo "FAIL: ssv0 interface never appeared (driver ssv6x5x not loaded?)"
+        exit 0
+    fi
+    for i in $(seq 1 30); do
+        STATE=$(cat /sys/class/net/ssv0/operstate 2>/dev/null)
+        IP4=$(ip -4 addr show ssv0 2>/dev/null | awk '/inet /{print $2; exit}')
+        if [ "$STATE" = "up" ] && [ -n "$IP4" ]; then
+            echo "[+${i}x2s] associated, ip=$IP4 state=$STATE"
+            break
+        fi
+        sleep 2
+    done
+    echo "--- final state ---"
+    echo "operstate: $(cat /sys/class/net/ssv0/operstate 2>/dev/null)"
+    ip addr show ssv0 2>/dev/null
+    echo "--- dmesg ssv6x5x tail ---"
+    dmesg 2>/dev/null | grep -iE 'ssv|wlan|wifi' | tail -30
+    echo "=== end ==="
+) &
+
 # Install SSH authorized key from /data (deployed by sd_setup.sh).
 # /root lives on the read-only rootfs, so remount rw for the copy then ro.
 if [ -f /data/ssh_authorized_keys ]; then

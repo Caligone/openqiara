@@ -147,16 +147,21 @@ Garde ces fichiers en lieu sûr — c'est ton billet retour si quelque chose tou
 
 ### 2. Télécharger les artefacts
 
-Depuis la [dernière release](https://github.com/Caligone/openqiara/releases/latest) :
+Récupère le tag de la dernière release sur [la page des releases](https://github.com/Caligone/openqiara/releases)
+(tant qu'on est en pre-release alpha, l'URL `releases/latest/download/` renvoie un 404 — il faut
+pointer le tag explicitement) :
 
 ```bash
 mkdir -p openqiara && cd openqiara
 
+VERSION=v0.1.0-alpha.3   # ajuster selon la dernière release publiée
+
 # Binaire daemon (ARMv7) + scripts d'install
-curl -LO https://github.com/Caligone/openqiara/releases/latest/download/openqiarad-linux-arm7
-curl -LO https://github.com/Caligone/openqiara/releases/latest/download/sd_setup.sh
-curl -LO https://github.com/Caligone/openqiara/releases/latest/download/patch_fbxhome.sh
-curl -LO https://github.com/Caligone/openqiara/releases/latest/download/SHA256SUMS
+BASE=https://github.com/Caligone/openqiara/releases/download/$VERSION
+curl -LO $BASE/openqiarad-linux-arm7
+curl -LO $BASE/sd_setup.sh
+curl -LO $BASE/patch_fbxhome.sh
+curl -LO $BASE/SHA256SUMS
 
 # Vérification d'intégrité
 shasum -a 256 -c SHA256SUMS
@@ -187,6 +192,14 @@ Trouve la caméra sur le réseau :
 ```bash
 arp -a | grep lwip
 ```
+
+> **Caméra introuvable sur le réseau ?** Le boot écrit un diagnostic wifi
+> dans `/data/boot_wifi.log` (écrasé à chaque démarrage). Tu peux le lire
+> en remettant la SD dans le Mac et en ouvrant la partition `data` avec
+> `debugfs -R "cat boot_wifi.log" /dev/diskNs2`. Tu y verras le SSID
+> configuré, l'état de l'interface `ssv0` et les messages `dmesg` du
+> driver wifi. Rappels : la puce est **2.4 GHz uniquement** et ne gère
+> que WPA2-PSK (pas WPA3-only ni WPA-Enterprise).
 
 ### 5. Patcher fbxhome (recommandé)
 
