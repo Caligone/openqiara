@@ -30,6 +30,11 @@ const defaultRepo = "Caligone/openqiara"
 // (binaire ARMv7). Doit matcher le nom produit par .github/workflows/release.yml.
 const AssetName = "openqiarad-linux-arm7"
 
+// BootScriptName est le script shell de boot qu'on déploie en /data/boot.sh.
+// Updaté en même temps que le binaire pour que les flags de lancement
+// (et autres ajustements système au boot) restent en phase avec le binaire.
+const BootScriptName = "camera_boot.sh"
+
 // ChecksumsName est le fichier qui contient les SHA256 des assets.
 const ChecksumsName = "SHA256SUMS"
 

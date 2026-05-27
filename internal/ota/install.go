@@ -57,14 +57,28 @@ type InstallConfig struct {
 	// BackupPath = où on garde l'ancien binaire avant swap pour rollback
 	// manuel SSH si le nouveau crash au boot.
 	BackupPath string
+
+	// BootTargetPath = chemin du script de boot (sur /data) à mettre à
+	// jour en même temps que le binaire.
+	BootTargetPath string
+	// BootBackupPath = où on garde l'ancien boot.sh pour rollback (sur
+	// /data : c'est petit, ~10 KB).
+	BootBackupPath string
+	// BootValidator est appelé sur le boot.sh téléchargé pour valider
+	// qu'il est correct avant le swap. Retour non-nil = abort install.
+	// Override en test pour shunter `sh -n` (qui peut manquer en CI).
+	BootValidator func(path string) error
 }
 
 // DefaultInstallConfig pour la cam Qiara.
 func DefaultInstallConfig() InstallConfig {
 	return InstallConfig{
-		StageDir:   "/media",
-		TargetPath: "/data/openqiarad",
-		BackupPath: "/media/openqiarad.old",
+		StageDir:       "/media",
+		TargetPath:     "/data/openqiarad",
+		BackupPath:     "/media/openqiarad.old",
+		BootTargetPath: "/data/boot.sh",
+		BootBackupPath: "/data/boot.sh.old",
+		BootValidator:  validateBootScript,
 	}
 }
 
@@ -157,62 +171,71 @@ func (in *Installer) fail(err error) {
 }
 
 func (in *Installer) run(ctx context.Context, tagName string) {
-	stagePath := filepath.Join(in.cfg.StageDir, "openqiarad.new")
+	binStagePath := filepath.Join(in.cfg.StageDir, "openqiarad.new")
+	bootStagePath := filepath.Join(in.cfg.StageDir, "boot.sh.new")
 
-	// 1. Download binaire ARM.
-	binURL := fmt.Sprintf("https://github.com/%s/releases/download/%s/%s", in.client.repo, tagName, AssetName)
-	if err := in.download(ctx, binURL, stagePath); err != nil {
-		in.fail(fmt.Errorf("download: %w", err))
-		return
-	}
-
-	// 2. Verify SHA256.
-	in.setStep(StepVerify, nil)
-	checksumsURL := fmt.Sprintf("https://github.com/%s/releases/download/%s/%s", in.client.repo, tagName, ChecksumsName)
-	expected, err := in.fetchChecksum(ctx, checksumsURL, AssetName)
-	if err != nil {
-		_ = os.Remove(stagePath)
-		in.fail(fmt.Errorf("fetch checksum: %w", err))
-		return
-	}
-	actual, err := sha256OfFile(stagePath)
-	if err != nil {
-		_ = os.Remove(stagePath)
-		in.fail(fmt.Errorf("hash staged file: %w", err))
-		return
-	}
-	if !strings.EqualFold(actual, expected) {
-		_ = os.Remove(stagePath)
-		in.fail(fmt.Errorf("checksum mismatch: got %s, expected %s", actual, expected))
+	// 1. Download + verify binaire.
+	if err := in.downloadAndVerify(ctx, tagName, AssetName, binStagePath); err != nil {
+		_ = os.Remove(binStagePath)
+		in.fail(fmt.Errorf("binary: %w", err))
 		return
 	}
 
-	// 3. Backup. Copie de l'ancien binaire vers /media pour permettre
-	//    un rollback manuel SSH si le nouveau crash.
+	// 2. Download + verify boot.sh (optionnel : si pas dans la release on
+	//    skip silencieusement pour rester compatible avec d'anciennes
+	//    releases qui n'ont que le binaire). 404 sur l'asset = skip.
+	bootInstalled := false
+	if err := in.downloadAndVerify(ctx, tagName, BootScriptName, bootStagePath); err != nil {
+		if !errors.Is(err, errAssetNotFound) {
+			_ = os.Remove(binStagePath)
+			_ = os.Remove(bootStagePath)
+			in.fail(fmt.Errorf("boot script: %w", err))
+			return
+		}
+		_ = os.Remove(bootStagePath)
+	} else {
+		// 3. Validate boot.sh syntaxe avant tout swap.
+		if in.cfg.BootValidator != nil {
+			if err := in.cfg.BootValidator(bootStagePath); err != nil {
+				_ = os.Remove(binStagePath)
+				_ = os.Remove(bootStagePath)
+				in.fail(fmt.Errorf("boot script validation: %w", err))
+				return
+			}
+		}
+		bootInstalled = true
+	}
+
+	// 4. Backup ancien binaire vers /media (gros, donc hors /data).
 	in.setStep(StepBackup, nil)
 	if err := copyFile(in.cfg.TargetPath, in.cfg.BackupPath); err != nil {
-		// Pas fatal — on continue, juste pas de filet rollback.
-		// Mais on log via le status pour traçabilité.
+		// Pas fatal — on continue, juste pas de filet rollback binaire.
 		in.setStep(StepBackup, func(s *InstallStatus) {
-			s.Error = "backup failed (continuing): " + err.Error()
+			s.Error = "binary backup failed (continuing): " + err.Error()
 		})
 	}
 
-	// 4. Swap. Le binaire en cours d'exécution tient un FD ouvert sur
-	//    /data/openqiarad (Linux référence par inode) — tant qu'on est
-	//    vivant, un `rm` ne libère pas l'espace disque. Sur la cam où
-	//    /data est ~plein, copier le nouveau binaire dans /data avant
-	//    de mourir échoue avec "no space left on device".
+	// 5. Swap boot.sh atomique (cp+rename). Si ça échoue après, on n'a
+	//    pas encore touché au binaire — abort propre.
+	if bootInstalled {
+		if err := swapFile(bootStagePath, in.cfg.BootTargetPath, in.cfg.BootBackupPath); err != nil {
+			_ = os.Remove(binStagePath)
+			_ = os.Remove(bootStagePath)
+			in.fail(fmt.Errorf("swap boot script: %w", err))
+			return
+		}
+	}
+
+	// 6. Schedule swap binaire via script détaché. Le binaire en cours
+	//    d'exécution tient un FD ouvert sur /data/openqiarad : sur
+	//    /data ~plein un cp direct échoue, on délègue à un script qui
+	//    attend notre mort puis cp /media → /data et relance.
 	//
-	//    Solution : on délègue le swap à un script détaché qui attend
-	//    notre mort, puis fait le cp /media → /data et relance.
-	//
-	//    L'Installer s'arrête à "binaire ready sur /media" (StepReady).
-	//    onComplete prend le relais : main.go injecte un callback qui
-	//    lance le script puis SIGTERM. Découplage utile pour les tests
-	//    (onComplete=nil = on ne touche pas le système).
+	//    L'Installer s'arrête à "binaire ready sur /media" (StepDone) ;
+	//    onComplete prend le relais (main.go injecte un callback qui
+	//    lance le script puis SIGTERM).
 	in.setStep(StepSwap, func(s *InstallStatus) {
-		s.StagedAt = stagePath
+		s.StagedAt = binStagePath
 	})
 	in.mu.Lock()
 	in.status.Step = StepDone
@@ -223,6 +246,56 @@ func (in *Installer) run(ctx context.Context, tagName string) {
 	time.Sleep(500 * time.Millisecond)
 	in.onComplete()
 }
+
+// downloadAndVerify télécharge un asset depuis la release et vérifie
+// son SHA256 contre SHA256SUMS. Retourne errAssetNotFound si l'asset
+// n'existe pas dans cette release (404).
+func (in *Installer) downloadAndVerify(ctx context.Context, tagName, assetName, stagePath string) error {
+	url := fmt.Sprintf("https://github.com/%s/releases/download/%s/%s", in.client.repo, tagName, assetName)
+	if err := in.download(ctx, url, stagePath); err != nil {
+		return fmt.Errorf("download %s: %w", assetName, err)
+	}
+	in.setStep(StepVerify, nil)
+	checksumsURL := fmt.Sprintf("https://github.com/%s/releases/download/%s/%s", in.client.repo, tagName, ChecksumsName)
+	expected, err := in.fetchChecksum(ctx, checksumsURL, assetName)
+	if err != nil {
+		return fmt.Errorf("fetch checksum for %s: %w", assetName, err)
+	}
+	actual, err := sha256OfFile(stagePath)
+	if err != nil {
+		return fmt.Errorf("hash staged file: %w", err)
+	}
+	if !strings.EqualFold(actual, expected) {
+		return fmt.Errorf("checksum mismatch for %s: got %s, expected %s", assetName, actual, expected)
+	}
+	return nil
+}
+
+// swapFile fait : backup target → backupPath, puis rename src → target.
+// rename est atomique sur le même FS. On accepte que target n'existe
+// pas encore (premier déploiement) — pas de backup dans ce cas.
+func swapFile(src, target, backupPath string) error {
+	if _, err := os.Stat(target); err == nil {
+		// Backup via copyFile (pas rename : target et backup peuvent
+		// être sur des FS différents).
+		if err := copyFile(target, backupPath); err != nil {
+			return fmt.Errorf("backup %s → %s: %w", target, backupPath, err)
+		}
+	}
+	// Si src et target sont sur des FS différents (typique : /media → /data),
+	// os.Rename retourne EXDEV → on tombe sur copyFile + remove.
+	if err := os.Rename(src, target); err != nil {
+		if err := copyFile(src, target); err != nil {
+			return fmt.Errorf("copy %s → %s: %w", src, target, err)
+		}
+		_ = os.Remove(src)
+	}
+	return nil
+}
+
+// errAssetNotFound signale qu'un asset optionnel n'existe pas dans la
+// release (skip silencieux côté caller).
+var errAssetNotFound = errors.New("asset not found in release")
 
 // download écrit l'URL dans dst et met à jour le status (progress %).
 func (in *Installer) download(ctx context.Context, url, dst string) error {
@@ -235,6 +308,9 @@ func (in *Installer) download(ctx context.Context, url, dst string) error {
 		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusNotFound {
+		return errAssetNotFound
+	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("status %d", resp.StatusCode)
 	}
