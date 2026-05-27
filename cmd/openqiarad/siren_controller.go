@@ -105,19 +105,20 @@ func (s *sirenController) Handle(newState, prevState string) {
 		if mode != "all" {
 			return
 		}
+		// En mode fbxhome (sans charmux) le seul tone exposé par l'API
+		// vendor est `test=true` qui déclenche un wail (≈1s audible avant
+		// que le reboot_srn du disarm ne le coupe). Ce n'est pas un beep
+		// court — skip plutôt que produire un faux beep.
+		if s.charmux == nil {
+			return
+		}
 		s.run(func() {
 			addr := s.findSRN()
 			if addr == 0 {
 				return
 			}
 			s.logger.Info("siren: arming beep", "addr", addr)
-			var err error
-			if s.charmux != nil {
-				err = s.charmux.SendSirenBeep(s.ctx, addr)
-			} else {
-				err = s.cam.TriggerSiren(s.ctx, addr)
-			}
-			if err != nil {
+			if err := s.charmux.SendSirenBeep(s.ctx, addr); err != nil {
 				s.logger.Error("siren: arming beep failed", "error", err)
 			}
 		})
@@ -145,18 +146,15 @@ func (s *sirenController) Handle(newState, prevState string) {
 			if err := s.cam.StopSiren(s.ctx, addr); err != nil {
 				s.logger.Error("siren: stop failed", "error", err)
 			}
-			if mode == "all" {
+			if mode == "all" && s.charmux != nil {
 				// Disarm beep — uniquement dispo comme tone dédié en charmux.
-				if s.charmux != nil {
-					disarmBeep := []byte{
-						0x01, 0x55, 0x04, 0x1e, 0x1e, 0x96, 0x05, 0x64, 0x03,
-						0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03,
-						0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03,
-					}
-					_ = s.charmux.SendSirenDebug(s.ctx, addr, disarmBeep, true, true, 3400)
-				} else {
-					_ = s.cam.TriggerSiren(s.ctx, addr)
+				// En mode fbxhome il n'y a pas d'équivalent court : skip.
+				disarmBeep := []byte{
+					0x01, 0x55, 0x04, 0x1e, 0x1e, 0x96, 0x05, 0x64, 0x03,
+					0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03,
+					0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03,
 				}
+				_ = s.charmux.SendSirenDebug(s.ctx, addr, disarmBeep, true, true, 3400)
 			}
 		})
 	}
