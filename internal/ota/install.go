@@ -298,12 +298,14 @@ func swapFile(src, target, backupPath string) error {
 var errAssetNotFound = errors.New("asset not found in release")
 
 // download écrit l'URL dans dst et met à jour le status (progress %).
+// Utilise downloadHTTP (timeout 10 min) plutôt que http (15s) car les
+// binaires de release font ~10 MB et la cam download à ~100 KB/s.
 func (in *Installer) download(ctx context.Context, url, dst string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
 	}
-	resp, err := in.client.http.Do(req)
+	resp, err := in.client.downloadHTTP.Do(req)
 	if err != nil {
 		return err
 	}

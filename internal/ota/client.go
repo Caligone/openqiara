@@ -16,10 +16,16 @@ import (
 // Le cache de CheckLatest est en RAM, par instance (pas de persistence
 // disque) : un restart oblige à re-checker. Suffit largement vu qu'on
 // ne check qu'à l'ouverture de l'UI.
+//
+// Deux http.Client séparés : `http` pour les appels API JSON (rapides,
+// timeout 15s) et `downloadHTTP` pour les downloads d'assets (binaire
+// ARM ~10 MB sur la cam à ~100 KB/s = ~100s, timeout 10 min pour avoir
+// de la marge).
 type Client struct {
 	repo         string        // ex "Caligone/openqiara"
 	currentVer   string        // version courante du binaire qui tourne
-	http         *http.Client
+	http         *http.Client  // API JSON: CheckLatest, fetchChecksum
+	downloadHTTP *http.Client  // assets binaires: download de la release
 	cacheTTL     time.Duration
 	logger       *slog.Logger
 
@@ -35,11 +41,12 @@ func NewClient(currentVersion string, logger *slog.Logger) *Client {
 		logger = slog.Default()
 	}
 	return &Client{
-		repo:       defaultRepo,
-		currentVer: currentVersion,
-		http:       newHTTPClient(15 * time.Second),
-		cacheTTL:   time.Hour,
-		logger:     logger,
+		repo:         defaultRepo,
+		currentVer:   currentVersion,
+		http:         newHTTPClient(15 * time.Second),
+		downloadHTTP: newHTTPClient(10 * time.Minute),
+		cacheTTL:     time.Hour,
+		logger:       logger,
 	}
 }
 

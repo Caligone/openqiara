@@ -53,18 +53,17 @@ func (f *fakeGitHub) close() { f.srv.Close() }
 // client construit un Client OTA qui tape le mock au lieu de github.com.
 func (f *fakeGitHub) client() *Client {
 	c := NewClient("v0.0.1", nil)
-	c.http = &http.Client{
-		Transport: rewriteTransport{
+	transport := rewriteTransport{
+		base:   f.srv.URL,
+		target: "https://github.com",
+		inner: rewriteTransport{
 			base:   f.srv.URL,
-			target: "https://github.com",
-			inner: rewriteTransport{
-				base:   f.srv.URL,
-				target: "https://api.github.com",
-				inner:  http.DefaultTransport,
-			},
+			target: "https://api.github.com",
+			inner:  http.DefaultTransport,
 		},
-		Timeout: 5 * time.Second,
 	}
+	c.http = &http.Client{Transport: transport, Timeout: 5 * time.Second}
+	c.downloadHTTP = &http.Client{Transport: transport, Timeout: 5 * time.Second}
 	return c
 }
 
