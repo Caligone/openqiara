@@ -36,7 +36,7 @@ jobs:
           file openqiarad-linux-arm7
 
       - name: SHA256 checksums
-        run: sha256sum openqiarad-linux-arm7 scripts/sd_setup.sh scripts/patch_fbxhome.sh > SHA256SUMS
+        run: sha256sum openqiarad-linux-arm7 scripts/sd_setup.sh scripts/patch_fbxhome.sh scripts/camera_boot.sh > SHA256SUMS
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -45,6 +45,7 @@ jobs:
             openqiarad-linux-arm7
             scripts/sd_setup.sh
             scripts/patch_fbxhome.sh
+            scripts/camera_boot.sh
             SHA256SUMS
           generate_release_notes: true
           prerelease: ${{ contains(github.ref_name, '-alpha') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-rc') }}

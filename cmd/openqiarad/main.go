@@ -65,6 +65,11 @@ func main() {
 	mode := flag.String("mode", "auto", "backend mode: fbxhome, charmux, or auto")
 	debugAPI := flag.Bool("debug", false, "enable /api/debug/* endpoints (PKT raw, siren raw — can brick the MCU)")
 	showVersion := flag.Bool("version", false, "print version and exit")
+	// logPath="" → stdout (dev). Sinon, lumberjack écrit dans le fichier
+	// avec rotation (cap dur, indispensable sur /data ~20 MB).
+	logPath := flag.String("log", "", "path to log file with rotation; empty = stdout")
+	logMaxMB := flag.Int("log-max-mb", 1, "max size per log file (MB) before rotation")
+	logMaxBackups := flag.Int("log-max-backups", 3, "max number of rotated files to keep")
 	flag.Parse()
 
 	if *showVersion {
@@ -72,7 +77,8 @@ func main() {
 		os.Exit(0)
 	}
 
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logWriter := newLogWriter(*logPath, *logMaxMB, *logMaxBackups)
+	logger := slog.New(slog.NewTextHandler(logWriter, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(logger)
 	logger.Info("openqiarad starting", "version", BuildInfo(), "config", *configPath, "poll_interval", *pollInterval, "mode", *mode)
 

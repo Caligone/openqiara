@@ -191,7 +191,11 @@ hls -p /tmp/out_stream/stream/720p -r 720 --use-h264 &
 # Start openqiarad on port 80 (default HTTP, so http://openqiara.local works
 # directly without a port in the URL). mode=fbxhome makes us a proxy:
 # fbxhome handles the radio, we publish to HA/MQTT/HomeKit.
-/data/openqiarad -web :80 -mode fbxhome >> /data/openqiarad.log 2>&1 &
+#
+# -log active la rotation interne lumberjack (1 MB par fichier, 3 backups
+# = ~4 MB max). Le watchdog ci-dessous reste comme filet de sécurité au
+# cas où lumberjack se planterait (cap dur à 4 MB par fichier).
+/data/openqiarad -web :80 -mode fbxhome -log /data/openqiarad.log >/dev/null 2>&1 &
 
 # Resume hlcamd video streams in the background. hlcamd starts paused
 # and needs time to register on fbxbus before resume_streams works.
