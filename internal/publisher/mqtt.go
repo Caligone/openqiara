@@ -40,6 +40,11 @@ func (m *MQTTPublisher) HAPublisher() *mqtt.HAPublisher {
 	return m.pub
 }
 
+// IsConnected reports the live MQTT connection state.
+func (m *MQTTPublisher) IsConnected() bool {
+	return m.pub.IsConnected()
+}
+
 func (m *MQTTPublisher) Start(ctx context.Context, sensors []camera.Sensor, cmds *CommandHandler) error {
 	if err := m.pub.Connect(ctx, m.cfg, sensors); err != nil {
 		return err

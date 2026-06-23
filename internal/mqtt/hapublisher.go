@@ -22,10 +22,23 @@ const (
 
 // HAPublisher implements Publisher for Home Assistant MQTT auto-discovery.
 type HAPublisher struct {
-	mu     sync.Mutex
-	client mqtt.Client
-	prefix string // topic prefix, default "openqiara"
-	log    *slog.Logger
+	mu      sync.Mutex
+	client  mqtt.Client
+	prefix  string // topic prefix, default "openqiara"
+	log     *slog.Logger
+	sensors []camera.Sensor // remembered for re-publish on (re)connect
+
+	// onConnect is invoked after discovery is (re)published on every successful
+	// connection, letting the caller refresh live state (sensor/alarm). May be nil.
+	onConnect func()
+}
+
+// SetOnConnect registers a callback invoked after discovery is (re)published on
+// each successful broker connection. Used to re-push live sensor/alarm state.
+func (p *HAPublisher) SetOnConnect(fn func()) {
+	p.mu.Lock()
+	p.onConnect = fn
+	p.mu.Unlock()
 }
 
 // NewHAPublisher creates a new HAPublisher.
@@ -47,6 +60,7 @@ func (p *HAPublisher) Connect(ctx context.Context, cfg Config, sensors []camera.
 		prefix = "openqiara"
 	}
 	p.prefix = prefix
+	p.sensors = sensors
 
 	opts := mqtt.NewClientOptions().
 		AddBroker(cfg.Broker).
@@ -57,8 +71,21 @@ func (p *HAPublisher) Connect(ctx context.Context, cfg Config, sensors []camera.
 		SetConnectionLostHandler(func(_ mqtt.Client, err error) {
 			p.log.Warn("mqtt connection lost", "error", err)
 		}).
+		// Discovery is (re)published on every connection — including the very
+		// first one even if the broker was down at boot, and on each reconnect.
+		// Retained + idempotent, so HA always recovers without a daemon restart.
 		SetOnConnectHandler(func(_ mqtt.Client) {
 			p.log.Info("mqtt connected", "broker", cfg.Broker)
+			p.republishDiscovery(ctx)
+			p.mu.Lock()
+			fn := p.onConnect
+			p.mu.Unlock()
+			if fn != nil {
+				// In a goroutine: the callback re-publishes state (acquiring
+				// p.mu), but OnConnectHandler may run while Connect still holds
+				// p.mu — calling fn() inline would deadlock.
+				go fn()
+			}
 		})
 
 	if cfg.Username != "" {
@@ -66,23 +93,26 @@ func (p *HAPublisher) Connect(ctx context.Context, cfg Config, sensors []camera.
 		opts.SetPassword(cfg.Password)
 	}
 
-	client := mqtt.NewClient(opts)
-	token := client.Connect()
+	p.client = mqtt.NewClient(opts)
+	// Non-blocking: don't fail Start if the broker is unreachable at boot.
+	// paho reconnects in the background and OnConnectHandler publishes discovery.
+	token := p.client.Connect()
 	if !token.WaitTimeout(connectTimeout) {
-		return fmt.Errorf("mqtt connect timeout")
-	}
-	if err := token.Error(); err != nil {
-		return fmt.Errorf("mqtt connect: %w", err)
+		p.log.Warn("mqtt connect timeout, will retry in background", "broker", cfg.Broker)
+	} else if err := token.Error(); err != nil {
+		p.log.Warn("mqtt connect failed, will retry in background", "broker", cfg.Broker, "error", err)
 	}
 
-	p.client = client
+	return nil
+}
 
-	// Publish discovery for all known sensors.
-	for _, s := range sensors {
+// republishDiscovery (re)publishes all retained discovery configs. Called from
+// OnConnectHandler, so it must NOT take p.mu (the lock may be held by Connect).
+func (p *HAPublisher) republishDiscovery(ctx context.Context) {
+	for _, s := range p.sensors {
 		if err := p.publishDiscovery(ctx, s); err != nil {
 			p.log.Warn("discovery publish failed", "sensor_id", s.ID, "error", err)
 		}
-		// Publish extra entities (battery, temperature)
 		for _, extra := range buildExtraDiscoveryTopics(p.prefix, s) {
 			payload, err := json.Marshal(extra.Payload)
 			if err != nil {
@@ -94,13 +124,10 @@ func (p *HAPublisher) Connect(ctx context.Context, cfg Config, sensors []camera.
 		}
 	}
 
-	// Publish shutter discovery (camera stream is added as generic camera in HA)
 	shutterTopic, shutterPayload := ShutterDiscoveryPayload(p.prefix)
 	if err := p.publish(ctx, shutterTopic, shutterPayload, retained); err != nil {
 		p.log.Warn("shutter discovery failed", "error", err)
 	}
-
-	return nil
 }
 
 // PublishShutterState publishes the shutter state to MQTT.
@@ -259,6 +286,14 @@ func (p *HAPublisher) PublishSirenState(ctx context.Context, sensorID int, activ
 // Prefix returns the configured topic prefix.
 func (p *HAPublisher) Prefix() string {
 	return p.prefix
+}
+
+// IsConnected reports the live MQTT connection state (paho auto-reconnects in
+// the background, so this can flip after Connect succeeded).
+func (p *HAPublisher) IsConnected() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.client != nil && p.client.IsConnected()
 }
 
 // PublishRaw publishes a raw payload to a topic with retain.

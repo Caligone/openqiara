@@ -173,8 +173,8 @@ func main() {
 	}
 
 	// MQTT publisher
-	var mqttConnected bool
 	var mqttPub *publisher.MQTTPublisher
+	mqttConnected := func() bool { return mqttPub != nil && mqttPub.IsConnected() }
 	if cfg.MQTT.Broker != "" {
 		mqttCfg := mqtt.Config{
 			Broker:      cfg.MQTT.Broker,
@@ -189,11 +189,37 @@ func main() {
 		// In alarmo mode, don't publish our own alarm_control_panel entity —
 		// Alarmo is the source of truth for the alarm state in HA.
 		mqttPub.PublishAlarmEntity = cfg.AlarmMode() == "standalone"
+
+		// Re-pushed on every (re)connect so HA recovers after a broker/HA
+		// restart without a daemon reboot.
+		mqttPub.HAPublisher().SetOnConnect(func() {
+			for _, s := range sensors {
+				if s.Type == "KPD" {
+					continue
+				}
+				updated, err := cam.ReadSensor(ctx, s.ID, []string{"state", "temperature", "battery"})
+				if err != nil {
+					// Expected when a sensor hasn't emitted a PKT event yet —
+					// c.sensors is populated lazily. Debug to avoid noisy WARNs.
+					logger.Debug("state read skipped (no live state yet)", "id", s.ID, "error", err)
+					continue
+				}
+				updated.TypeName = s.TypeName
+				updated.ItemID = s.ItemID
+				updated.Type = s.Type
+				updated.Reachable = s.Reachable
+				if err := mqttPub.PublishSensorState(ctx, *updated); err != nil {
+					logger.Warn("publish sensor state failed", "id", s.ID, "error", err)
+				}
+			}
+		})
+
+		// Start no longer fails on an unreachable broker: paho reconnects in the
+		// background and re-publishes discovery + state via OnConnect.
 		if err := mqttPub.Start(ctx, sensors, cmds); err != nil {
 			logger.Error("failed to start MQTT publisher", "error", err)
 		} else {
 			pubs = append(pubs, mqttPub)
-			mqttConnected = true
 			logger.Info("MQTT publisher started", "broker", cfg.MQTT.Broker)
 
 			// Setup shutter command handler
@@ -206,28 +232,6 @@ func main() {
 					}
 				}
 			}, logger)
-
-			// Publish initial sensor states
-			for _, s := range sensors {
-				if s.Type == "KPD" {
-					continue
-				}
-				updated, err := cam.ReadSensor(ctx, s.ID, []string{"state", "temperature", "battery"})
-				if err != nil {
-					// Expected at boot for sensors that haven't yet emitted a
-					// PKT event since startup — c.sensors is populated lazily
-					// from PKT events. Log at debug to avoid noisy WARNs.
-					logger.Debug("initial read skipped (no live state yet)", "id", s.ID, "error", err)
-					continue
-				}
-				updated.TypeName = s.TypeName
-				updated.ItemID = s.ItemID
-				updated.Type = s.Type
-				updated.Reachable = s.Reachable
-				if err := mqttPub.PublishSensorState(ctx, *updated); err != nil {
-					logger.Warn("publish initial sensor state failed", "id", s.ID, "error", err)
-				}
-			}
 		}
 	} else {
 		logger.Warn("no MQTT broker configured")
@@ -305,7 +309,7 @@ func main() {
 	}
 	var webSrv *web.Server
 	if cfg.WebEnabled() {
-		webSrv = web.NewServer(cam, store, func() bool { return mqttConnected }, mqttCB, staticweb.StaticFiles, logger)
+		webSrv = web.NewServer(cam, store, mqttConnected, mqttCB, staticweb.StaticFiles, logger)
 		webSrv.SetVersion(BuildInfo())
 		if *debugAPI {
 			webSrv.EnableDebugEndpoints()

@@ -965,12 +965,16 @@ document.getElementById('cfg-save-all').addEventListener('click', async () => {
 
   try {
     const results = await Promise.all(calls);
+    let rebootRequired = false;
     for (const r of results) {
       const d = await r.json();
       if (d.error) throw new Error(d.error);
+      if (d.reboot_required) rebootRequired = true;
     }
     msg.className = 'msg success';
-    msg.textContent = 'Configuration sauvegardée.';
+    msg.textContent = rebootRequired
+      ? 'Configuration sauvegardée. Redémarrez pour appliquer le broker MQTT.'
+      : 'Configuration sauvegardée.';
     window.currentAlarmMode = document.getElementById('cfg-alarm-mode').value;
     document.getElementById('cfg-admin-password').value = '';
     fetchSensors();

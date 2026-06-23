@@ -1040,7 +1040,8 @@ func (s *Server) handleUpdateMQTT(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	// Broker settings are only read at boot; a reboot is required to apply them.
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "reboot_required": true})
 }
 
 func (s *Server) handleUpdateHomeKit(w http.ResponseWriter, r *http.Request) {

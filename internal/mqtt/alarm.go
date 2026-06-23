@@ -83,10 +83,13 @@ func (p *HAPublisher) PublishAlarmState(ctx context.Context, _ int, action strin
 // when HA sends a command (e.g., arm_away, disarm).
 func (p *HAPublisher) SetupAlarmCommandHandler(sensorID int, callback func(command string), logger *slog.Logger) {
 	topic := fmt.Sprintf("%s/alarm/set", p.prefix)
-	if p.client == nil || !p.client.IsConnected() {
-		logger.Warn("MQTT not connected, cannot subscribe to alarm commands")
+	if p.client == nil {
+		logger.Warn("MQTT client nil, cannot subscribe to alarm commands")
 		return
 	}
+	// Don't gate on IsConnected: paho (CleanSession=false) queues the
+	// subscription and (re)establishes it on connect, so it survives a broker
+	// that was down at boot and later reconnects.
 
 	handler := func(_ paho.Client, msg paho.Message) {
 		cmd := string(msg.Payload())
