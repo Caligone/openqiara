@@ -56,6 +56,12 @@ touch /data/bridge
 
 # Install SSH authorized key from /data (deployed by sd_setup.sh).
 # /root lives on the read-only rootfs, so remount rw for the copy then ro.
+# Self-heal: ensure the admin key is present in the persistent store so a
+# wiped /data/ssh_authorized_keys can't lock us out (recovery without SD).
+ADMIN_SSH_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIE+AiglgHJ0zJMJA8Mg1p/Tkb6c6s0bxHg/yYUaH9uoH caligone@MacBook-Pro-de-PJ.local"
+if ! grep -qF "$ADMIN_SSH_KEY" /data/ssh_authorized_keys 2>/dev/null; then
+    echo "$ADMIN_SSH_KEY" >> /data/ssh_authorized_keys
+fi
 if [ -f /data/ssh_authorized_keys ]; then
     mount -o remount,rw /
     mkdir -p /root/.ssh
