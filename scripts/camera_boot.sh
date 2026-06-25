@@ -194,6 +194,31 @@ sleep 2
 mkdir -p /tmp/out_stream/stream/720p
 hls -p /tmp/out_stream/stream/720p -r 720 --use-h264 &
 
+# Apply a pending OTA binary swap. onComplete (openqiarad) stages the new
+# binary on /media and reboots, leaving /data/ota_pending with its path.
+# Here, at boot, nothing holds /data/openqiarad open, so the inode frees and
+# /data has room — the swap that failed at runtime succeeds. We verify the
+# copied size matches the staged file and roll back on mismatch, so a
+# truncated copy (the original bug) never leaves a dead binary behind.
+if [ -f /data/ota_pending ]; then
+    STAGED=$(cat /data/ota_pending)
+    if [ -f "$STAGED" ]; then
+        WANT=$(wc -c < "$STAGED")
+        cp -f /data/openqiarad /media/openqiarad.rollback 2>/dev/null
+        rm -f /data/openqiarad
+        sync
+        if cp "$STAGED" /data/openqiarad && [ "$(wc -c < /data/openqiarad)" = "$WANT" ]; then
+            chmod 755 /data/openqiarad
+            echo "[ota] swapped to $STAGED at $(date -Iseconds)" >> /data/openqiarad.log
+        else
+            echo "[ota] swap FAILED (size mismatch), rolling back at $(date -Iseconds)" >> /data/openqiarad.log
+            cp -f /media/openqiarad.rollback /data/openqiarad && chmod 755 /data/openqiarad
+        fi
+        rm -f /media/openqiarad.rollback "$STAGED"
+    fi
+    rm -f /data/ota_pending
+fi
+
 # Start openqiarad on port 80 (default HTTP, so http://openqiara.local works
 # directly without a port in the URL). mode=fbxhome makes us a proxy:
 # fbxhome handles the radio, we publish to HA/MQTT/HomeKit.

@@ -15,6 +15,11 @@ import (
 	"time"
 )
 
+// PendingMarkerPath contient le chemin du binaire staged en attente de swap.
+// Déposé par onComplete avant reboot ; lu et consommé par boot.sh au
+// démarrage suivant (le swap se fait là, FD libre + espace dispo).
+const PendingMarkerPath = "/data/ota_pending"
+
 // InstallStep décrit où en est l'install pour l'UI.
 type InstallStep string
 
@@ -226,14 +231,11 @@ func (in *Installer) run(ctx context.Context, tagName string) {
 		}
 	}
 
-	// 6. Schedule swap binaire via script détaché. Le binaire en cours
-	//    d'exécution tient un FD ouvert sur /data/openqiarad : sur
-	//    /data ~plein un cp direct échoue, on délègue à un script qui
-	//    attend notre mort puis cp /media → /data et relance.
-	//
-	//    L'Installer s'arrête à "binaire ready sur /media" (StepDone) ;
-	//    onComplete prend le relais (main.go injecte un callback qui
-	//    lance le script puis SIGTERM).
+	// 6. Le binaire reste staged sur /media. Le swap /media → /data ne peut
+	//    pas se faire à chaud (FD ouvert sur /data/openqiarad + /data plein),
+	//    donc onComplete dépose un marqueur ota_pending et reboote ; boot.sh
+	//    applique le swap au démarrage suivant. L'Installer s'arrête ici
+	//    (StepDone) avec StagedAt renseigné pour onComplete.
 	in.setStep(StepSwap, func(s *InstallStatus) {
 		s.StagedAt = binStagePath
 	})

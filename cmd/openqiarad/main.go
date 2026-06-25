@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
 	"sync/atomic"
 	"syscall"
@@ -410,12 +411,13 @@ func main() {
 	// OTA updater — interroge GitHub Releases pour proposer des
 	// updates depuis l'UI.
 	//
-	// onComplete : on délègue le swap final à un script shell détaché
-	// parce que le binaire courant tient /data/openqiarad par inode :
-	// rm ne libère pas l'espace tant qu'on est vivant, et /data est
-	// trop plein pour héberger nouveau + ancien en parallèle. Le script
-	// attend la mort du parent puis copie le binaire staged vers /data
-	// et relance avec les mêmes args.
+	// onComplete : on NE swappe PAS le binaire à chaud. Le process courant
+	// tient /data/openqiarad par inode (rm ne libère pas l'espace tant
+	// qu'on vit) et /data est trop plein pour deux binaires. On dépose donc
+	// un marqueur ota_pending (chemin du binaire staged) et on reboote :
+	// boot.sh applique le swap au démarrage suivant, FD libre et espace
+	// dispo. Plus robuste qu'un SIGTERM + relance (qui dépendait d'un
+	// shutdown propre et d'un re-bind du port :80).
 	if webSrv != nil {
 		otaClient := ota.NewClient(BuildInfo(), logger)
 		cfg := ota.DefaultInstallConfig()
@@ -426,12 +428,13 @@ func main() {
 				logger.Error("OTA onComplete: no staged path — aborting swap")
 				return
 			}
-			if err := launchSwapScript(staged, cfg.TargetPath, os.Args, logger); err != nil {
-				logger.Error("OTA: launch swap script failed", "error", err)
+			if err := os.WriteFile(ota.PendingMarkerPath, []byte(staged+"\n"), 0644); err != nil {
+				logger.Error("OTA: write pending marker failed", "error", err)
 				return
 			}
-			logger.Info("OTA install complete — handing off to swap script")
-			_ = syscall.Kill(os.Getpid(), syscall.SIGTERM)
+			logger.Info("OTA staged — rebooting to apply", "staged", staged)
+			time.Sleep(500 * time.Millisecond) // laisse l'UI poller le status final
+			_ = exec.Command("reboot").Run()
 		})
 		webSrv.SetOTA(otaClient, otaInstaller)
 	}
