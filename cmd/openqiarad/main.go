@@ -20,9 +20,11 @@ import (
 	"github.com/caligone/openqiara/internal/fbxhomelog"
 	"github.com/caligone/openqiara/internal/hlevents"
 	"github.com/caligone/openqiara/internal/mdns"
+	"github.com/caligone/openqiara/internal/mediahub"
 	"github.com/caligone/openqiara/internal/mqtt"
 	"github.com/caligone/openqiara/internal/ota"
 	"github.com/caligone/openqiara/internal/publisher"
+	"github.com/caligone/openqiara/internal/rtspserver"
 	"github.com/caligone/openqiara/internal/web"
 	staticweb "github.com/caligone/openqiara/web"
 )
@@ -238,6 +240,19 @@ func main() {
 		logger.Warn("no MQTT broker configured")
 	}
 
+	// Shared media pipeline. hlcamd freeze silencieusement après quelques
+	// heures (cf. feedback_hlcamd_freeze_after_hours.md) : le resumer le
+	// réveille à chaque requête vidéo. Le hub décode le flux HLS→H.264 une
+	// seule fois et le fan-out vers HomeKit (SRTP) et RTSP, au lieu que
+	// chaque sortie relise et re-parse les mêmes segments.
+	// HLSPath par défaut si non configuré : voir homekit_camera.go.
+	hlsPath := cfg.HomeKit.Camera.HLSPath
+	if hlsPath == "" {
+		hlsPath = "/tmp/out_stream/stream/720p/HLS_TEST.m3u8"
+	}
+	hlcamdResumer := camera.NewHlcamdResumer(hlsPath, 10*time.Second, 5*time.Second, logger)
+	mediaHub := mediahub.New(hlsPath, hlcamdResumer, logger)
+
 	// HomeKit publisher
 	var hkPub *publisher.HomeKitPublisher
 	if cfg.HomeKit.Enabled {
@@ -258,6 +273,32 @@ func main() {
 		} else {
 			pubs = append(pubs, hkPub)
 			logger.Info("HomeKit publisher started")
+		}
+	}
+
+	// RTSP server — standard H.264 stream (video only) for Scrypted/Frigate/VLC.
+	if cfg.RTSP.Enabled {
+		listen := cfg.RTSP.Listen
+		if listen == "" {
+			listen = ":8554"
+		}
+		rtspHLS := cfg.RTSP.HLSPath
+		if rtspHLS != "" && rtspHLS != hlsPath {
+			// The shared hub decodes a single HLSPath; an RTSP-specific
+			// override can't be honoured without a second pipeline, which
+			// defeats the purpose. Fall back to the shared source.
+			logger.Warn("rtsp: hls_path override ignored, using shared pipeline source",
+				"override", rtspHLS, "shared", hlsPath)
+		}
+		rtspSrv := rtspserver.New(rtspserver.Config{
+			Listen:  listen,
+			Path:    cfg.RTSP.Path,
+			HLSPath: hlsPath,
+		}, mediaHub, logger)
+		if err := rtspSrv.Start(ctx); err != nil {
+			logger.Error("failed to start RTSP server", "error", err)
+		} else {
+			logger.Info("RTSP server started", "listen", listen)
 		}
 	}
 
@@ -391,21 +432,15 @@ func main() {
 		logger.Info("hl_event_collectd dispatcher attached", "iv_kinds", []string{"human", "pet"})
 	}
 
-	// Lazy healing du pipeline HLS : hlcamd freeze silencieusement après
-	// quelques heures (cf. feedback_hlcamd_freeze_after_hours.md). On
-	// instancie un resumer partagé qui sera consulté à chaque requête
-	// video (UI web + ouverture session HK) — pas de watchdog.
-	// HLSPath par défaut si non configuré : voir homekit_camera.go.
-	hlsPath := cfg.HomeKit.Camera.HLSPath
-	if hlsPath == "" {
-		hlsPath = "/tmp/out_stream/stream/720p/HLS_TEST.m3u8"
-	}
-	hlcamdResumer := camera.NewHlcamdResumer(hlsPath, 10*time.Second, 5*time.Second, logger)
+	// hlcamdResumer + mediaHub sont créés plus haut (avant HomeKit/RTSP).
+	// On les branche ici sur les consommateurs dont le handle n'existe
+	// qu'après Start (web UI, caméra HK).
 	if webSrv != nil {
 		webSrv.SetHlcamdResumer(hlcamdResumer)
 	}
 	if hkPub != nil && hkPub.Camera() != nil {
 		hkPub.Camera().SetHlcamdResumer(hlcamdResumer)
+		hkPub.Camera().SetMediaHub(mediaHub)
 	}
 
 	// OTA updater — interroge GitHub Releases pour proposer des

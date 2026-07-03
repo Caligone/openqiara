@@ -28,8 +28,20 @@ echo "==> Waiting 3s for ports to free..."
 sleep 3
 
 echo "==> Uploading binary..."
+# The binary lives on /media (large partition); /data is tiny (~20 MB) and
+# only holds a symlink. Copying the binary into /data fills the disk and
+# leaves a truncated, segfaulting binary — so we stage on /media and verify
+# the byte count before symlinking.
+WANT=$(wc -c < bin/openqiarad)
 $SSH_CMD "rm -f ${REMOTE_BIN} /media/openqiarad"
-gzip -c bin/openqiarad | $SSH_CMD 'gunzip > /media/openqiarad && chmod +x /media/openqiarad && ln -sf /media/openqiarad /data/openqiarad'
+gzip -c bin/openqiarad | $SSH_CMD 'gunzip > /media/openqiarad && chmod +x /media/openqiarad'
+GOT=$($SSH_CMD 'wc -c < /media/openqiarad')
+if [ "$GOT" != "$WANT" ]; then
+	echo "!! Upload truncated: got $GOT bytes, expected $WANT (disk full on /media?)" >&2
+	exit 1
+fi
+$SSH_CMD 'ln -sf /media/openqiarad /data/openqiarad'
+echo "    Uploaded $GOT bytes, symlinked."
 
 echo "==> Starting openqiarad ($ARGS)..."
 $SSH_CMD "nohup ${REMOTE_BIN} ${ARGS} > /data/openqiarad.log 2>&1 &"

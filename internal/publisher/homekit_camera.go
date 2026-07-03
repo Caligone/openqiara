@@ -14,6 +14,7 @@ import (
 	"github.com/brutella/hap/tlv8"
 
 	"github.com/caligone/openqiara/internal/camera"
+	"github.com/caligone/openqiara/internal/mediahub"
 )
 
 // CameraConfig holds the configuration for the HomeKit Camera accessory.
@@ -50,8 +51,20 @@ type HomeKitCamera struct {
 	// nil = pas de healing, on lit ce qui est sur disque.
 	hlcamdResumer *camera.HlcamdResumer
 
+	// hub (optionnel) est le pipeline média partagé. Si non nil, chaque
+	// session s'y abonne au lieu de créer son propre watcher+parser, ce
+	// qui évite de décoder les mêmes segments en double quand RTSP tourne
+	// aussi. nil = fallback historique (watcher+parser dédiés).
+	hub *mediahub.Hub
+
 	mu       sync.Mutex
 	sessions map[string]*cameraSession // keyed by session id (base64)
+}
+
+// SetMediaHub attache le hub média partagé. Doit être appelé avant la
+// première session HK. Si non appelé, la caméra crée son propre pipeline.
+func (c *HomeKitCamera) SetMediaHub(h *mediahub.Hub) {
+	c.hub = h
 }
 
 // SetHlcamdResumer attache le helper de réveil hlcamd. Doit être appelé
@@ -420,44 +433,58 @@ func (c *HomeKitCamera) startStreaming(sess *cameraSession, videoPT, audioPT uin
 		c.hlcamdResumer.ResumeIfStale(ctx)
 	}
 
-	// HLS watcher → chunks
-	watcher := camera.NewHLSWatcher(c.cfg.HLSPath, c.log)
-	sess.wg.Add(1)
-	go func() {
-		defer sess.wg.Done()
-		if err := watcher.Run(ctx); err != nil {
-			c.log.Warn("camera: hls watcher exited", "error", err)
-		}
-	}()
+	// Sample source: the shared media hub if wired (one watcher+parser for
+	// all outputs), else a session-private watcher+parser (legacy path,
+	// kept for tests and hub-less builds).
+	var sampleCh <-chan camera.Sample
+	if c.hub != nil {
+		sub := c.hub.Subscribe()
+		sampleCh = sub.Samples()
+		sess.wg.Add(1)
+		go func() {
+			defer sess.wg.Done()
+			<-ctx.Done()
+			sub.Close()
+		}()
+	} else {
+		watcher := camera.NewHLSWatcher(c.cfg.HLSPath, c.log)
+		sess.wg.Add(1)
+		go func() {
+			defer sess.wg.Done()
+			if err := watcher.Run(ctx); err != nil {
+				c.log.Warn("camera: hls watcher exited", "error", err)
+			}
+		}()
 
-	// MPEG-TS parser → samples
-	parser := camera.NewMPEGTSParser(c.log)
-	sess.wg.Add(1)
-	go func() {
-		defer sess.wg.Done()
-		defer parser.Close()
-		for {
-			select {
-			case <-ctx.Done():
-				_ = parser.Flush(context.Background())
-				return
-			case chunk, ok := <-watcher.Chunks():
-				if !ok {
+		parser := camera.NewMPEGTSParser(c.log)
+		sess.wg.Add(1)
+		go func() {
+			defer sess.wg.Done()
+			defer parser.Close()
+			for {
+				select {
+				case <-ctx.Done():
 					_ = parser.Flush(context.Background())
 					return
-				}
-				if _, err := parser.Feed(ctx, chunk); err != nil {
-					c.log.Warn("camera: mpegts feed error", "error", err)
-				}
-				// Flush after each chunk so the last PES of the chunk
-				// is emitted promptly instead of waiting for the next
-				// chunk to arrive (~1 second of latency saved).
-				if err := parser.Flush(ctx); err != nil {
-					c.log.Warn("camera: mpegts flush error", "error", err)
+				case chunk, ok := <-watcher.Chunks():
+					if !ok {
+						_ = parser.Flush(context.Background())
+						return
+					}
+					if _, err := parser.Feed(ctx, chunk); err != nil {
+						c.log.Warn("camera: mpegts feed error", "error", err)
+					}
+					// Flush after each chunk so the last PES of the chunk
+					// is emitted promptly instead of waiting for the next
+					// chunk to arrive (~1 second of latency saved).
+					if err := parser.Flush(ctx); err != nil {
+						c.log.Warn("camera: mpegts flush error", "error", err)
+					}
 				}
 			}
-		}
-	}()
+		}()
+		sampleCh = parser.Samples()
+	}
 
 	// Samples → SRTP sender (video only for now; audio is dropped).
 	//
@@ -488,7 +515,7 @@ func (c *HomeKitCamera) startStreaming(sess *cameraSession, videoPT, audioPT uin
 			case <-ctx.Done():
 				flushPending(true)
 				return
-			case sample, ok := <-parser.Samples():
+			case sample, ok := <-sampleCh:
 				if !ok {
 					flushPending(true)
 					return

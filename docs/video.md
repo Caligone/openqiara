@@ -51,6 +51,36 @@ L'endpoint `/api/stream/start` ouvre aussi le shutter automatiquement.
 | VLC | ✅ |
 | Apple Home (HomeKit) | ✅ via SRTP (voir [`homekit.md`](homekit.md)) |
 
+## RTSP (recommandé pour NVR / détection)
+
+Pour les consommateurs vidéo standard (Scrypted, Frigate, VLC, Home
+Assistant), openqiarad expose un serveur **RTSP** natif. Contrairement au
+HLS, ce flux est **vidéo seule** (pas d'AAC) — la piste audio du HLS n'a
+pas de global headers et casse le muxing RTSP chez la plupart des clients
+(`AAC with no global headers is currently not supported`). La latence est
+aussi bien plus faible (~1 s contre ~5 s en HLS), car les NAL H.264 sont
+packetisés directement en RTP sans passer par des segments de 1 s.
+
+Activation dans `openqiara.json` :
+
+```json
+{
+  "rtsp": {
+    "enabled": true,
+    "listen": ":8554",
+    "path": "openqiara"
+  }
+}
+```
+
+URL : `rtsp://<camera>:8554/openqiara`
+
+Le pipeline (HLS watcher → parser MPEG-TS → H.264 RTP) est partagé avec la
+sortie HomeKit ; seul le transport diffère (RTP standard vs SRTP). Le flux
+démarre à la demande (première connexion RTSP) et s'arrête quand le dernier
+client se déconnecte. Implémenté en Go pur via `bluenviron/gortsplib`, sans
+ffmpeg.
+
 ## Shutter
 
 Le cache objectif doit être ouvert pour voir l'image :
