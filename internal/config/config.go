@@ -20,11 +20,12 @@ const adminBcryptCost = 10
 
 // Config is the root configuration persisted to disk.
 type Config struct {
-	MQTT    MQTTConfig    `json:"mqtt"`
-	HomeKit HomeKitConfig `json:"homekit"`
-	Admin   AdminConfig   `json:"admin"`
-	Web     WebConfig     `json:"web"`
-	Alarm   AlarmConfig   `json:"alarm"`
+	MQTT       MQTTConfig    `json:"mqtt"`
+	HomeKit    HomeKitConfig `json:"homekit"`
+	RTSP       RTSPConfig    `json:"rtsp,omitempty"`
+	Admin      AdminConfig   `json:"admin"`
+	Web        WebConfig     `json:"web"`
+	Alarm      AlarmConfig   `json:"alarm"`
 	Sensors    []SensorEntry `json:"sensors,omitempty"`
 	DeletedIDs []int         `json:"deleted_ids,omitempty"`
 }
@@ -143,6 +144,20 @@ func (c Config) AlarmoTopics() (command, state string) {
 	return
 }
 
+// RTSPConfig configures the optional standard RTSP server, which exposes
+// the camera's H.264 stream (video only, no AAC) for consumers like
+// Scrypted, Frigate or VLC. Disabled by default.
+type RTSPConfig struct {
+	Enabled bool `json:"enabled,omitempty"`
+	// Listen is the bind address, default ":8554".
+	Listen string `json:"listen,omitempty"`
+	// Path is the stream path, default "openqiara".
+	Path string `json:"path,omitempty"`
+	// HLSPath overrides the source HLS playlist; defaults to the same
+	// path the HomeKit camera uses.
+	HLSPath string `json:"hls_path,omitempty"`
+}
+
 // HomeKitConfig holds HomeKit bridge settings.
 type HomeKitConfig struct {
 	Enabled bool                `json:"enabled"`
@@ -228,10 +243,11 @@ func HashAdminPassword(plaintext string) (string, error) {
 // SensorEntry holds a paired sensor's persistent data.
 //
 // Day/Night alarm flags mirror fbxhome's ExportLink properties:
-// - DayAlarm/NightAlarm: true = sensor triggers the alarm in that mode.
-//   Default true (set explicitly at sensor creation).
-// - DayTimed/NightTimed: true = sensor honours timeout_before_alert before
-//   firing (entry/exit delay). Default true.
+//   - DayAlarm/NightAlarm: true = sensor triggers the alarm in that mode.
+//     Default true (set explicitly at sensor creation).
+//   - DayTimed/NightTimed: true = sensor honours timeout_before_alert before
+//     firing (entry/exit delay). Default true.
+//
 // In standalone alarm mode, NightAllowed (legacy) is still consulted; in
 // fbxhome bridge mode the new fields are pushed to fbxhome.
 type SensorEntry struct {

@@ -23,6 +23,7 @@ import (
 	"github.com/caligone/openqiara/internal/mqtt"
 	"github.com/caligone/openqiara/internal/ota"
 	"github.com/caligone/openqiara/internal/publisher"
+	"github.com/caligone/openqiara/internal/rtspserver"
 	"github.com/caligone/openqiara/internal/web"
 	staticweb "github.com/caligone/openqiara/web"
 )
@@ -258,6 +259,28 @@ func main() {
 		} else {
 			pubs = append(pubs, hkPub)
 			logger.Info("HomeKit publisher started")
+		}
+	}
+
+	// RTSP server — standard H.264 stream (video only) for Scrypted/Frigate/VLC.
+	if cfg.RTSP.Enabled {
+		listen := cfg.RTSP.Listen
+		if listen == "" {
+			listen = ":8554"
+		}
+		rtspHLS := cfg.RTSP.HLSPath
+		if rtspHLS == "" {
+			rtspHLS = cfg.HomeKit.Camera.HLSPath
+		}
+		rtspSrv := rtspserver.New(rtspserver.Config{
+			Listen:  listen,
+			Path:    cfg.RTSP.Path,
+			HLSPath: rtspHLS,
+		}, logger)
+		if err := rtspSrv.Start(ctx); err != nil {
+			logger.Error("failed to start RTSP server", "error", err)
+		} else {
+			logger.Info("RTSP server started", "listen", listen)
 		}
 	}
 
