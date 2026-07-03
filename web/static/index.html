@@ -990,11 +990,15 @@ document.getElementById('cfg-save-all').addEventListener('click', async () => {
 });
 
 // --- Init ---
+// loadConfig() pose window.currentAlarmMode ; renderSensors() en dépend pour
+// masquer les flags fbxhome par capteur en mode alarmo. On charge donc la
+// config AVANT le premier fetchSensors(), sinon la course fait apparaître les
+// flags à tort en mode alarmo (fallback 'standalone' quand le mode est encore
+// undefined).
 fetchStatus();
-fetchSensors();
 fetchAlarm();
 fetchCodes();
-loadConfig();
+loadConfig().then(fetchSensors);
 
 // --- Server-Sent Events ---
 // Replaces polling with a single streaming connection. The server pushes:
