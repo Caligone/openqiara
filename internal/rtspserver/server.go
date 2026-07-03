@@ -9,7 +9,6 @@ package rtspserver
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -20,7 +19,7 @@ import (
 	"github.com/bluenviron/gortsplib/v5/pkg/format"
 	"github.com/bluenviron/gortsplib/v5/pkg/format/rtph264"
 
-	"github.com/caligone/openqiara/internal/camera"
+	"github.com/caligone/openqiara/internal/mediahub"
 )
 
 // nalType returns the 5-bit H.264 NAL unit type from a NAL unit with no
@@ -57,6 +56,7 @@ type Config struct {
 type Server struct {
 	cfg  Config
 	log  *slog.Logger
+	hub  *mediahub.Hub
 	rsrv *gortsplib.Server
 
 	mu       sync.Mutex
@@ -76,8 +76,10 @@ type Server struct {
 	pps []byte
 }
 
-// New returns an RTSP server. Call Start to bind and serve.
-func New(cfg Config, logger *slog.Logger) *Server {
+// New returns an RTSP server. The hub is the shared media pipeline the
+// server subscribes to on the first reader; if nil, New panics — the RTSP
+// server has no standalone pipeline anymore. Call Start to bind and serve.
+func New(cfg Config, hub *mediahub.Hub, logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -87,7 +89,7 @@ func New(cfg Config, logger *slog.Logger) *Server {
 	if cfg.HLSPath == "" {
 		cfg.HLSPath = "/tmp/out_stream/stream/720p/HLS_TEST.m3u8"
 	}
-	return &Server{cfg: cfg, log: logger}
+	return &Server{cfg: cfg, hub: hub, log: logger}
 }
 
 // Start binds the RTSP listener and begins serving. It returns once the
@@ -222,9 +224,10 @@ func (s *Server) startPipeline() {
 	go s.runPipeline(plCtx)
 }
 
-// runPipeline drives the watcher→parser→encoder chain, mirroring the
-// wiring in publisher.HomeKitCamera but writing standard RTP through
-// gortsplib instead of SRTP. Video only; audio samples are dropped.
+// runPipeline subscribes to the shared media hub and packetizes its H.264
+// samples to RTP through gortsplib. The hub owns the watcher→parser chain
+// (shared with the HomeKit path); here we only group NAL into access units
+// and encode. Video only; audio samples are dropped.
 func (s *Server) runPipeline(ctx context.Context) {
 	enc := &rtph264.Encoder{
 		PayloadType:       uint8(s.forma.PayloadTyp),
@@ -235,35 +238,14 @@ func (s *Server) runPipeline(ctx context.Context) {
 		return
 	}
 
-	watcher := camera.NewHLSWatcher(s.cfg.HLSPath, s.log)
-	parser := camera.NewMPEGTSParser(s.log)
-
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case chunk, ok := <-watcher.Chunks():
-				if !ok {
-					return
-				}
-				if _, err := parser.Feed(ctx, chunk); err != nil && !errors.Is(err, context.Canceled) {
-					s.log.Warn("rtsp: mpegts feed error", "error", err)
-				}
-			}
-		}
-	}()
-	go func() {
-		if err := watcher.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-			s.log.Warn("rtsp: hls watcher stopped", "error", err)
-		}
-	}()
+	sub := s.hub.Subscribe()
+	defer sub.Close()
 
 	// The parser emits one NAL per Sample. gortsplib's encoder wants a
 	// whole access unit ([][]byte), so we buffer NAL of the same PTS and
 	// flush the group when the PTS advances (or an AUD/new IDR marks a
 	// boundary).
-	s.log.Info("rtsp: pipeline started", "hls", s.cfg.HLSPath)
+	s.log.Info("rtsp: pipeline started (via mediahub)", "hls", s.cfg.HLSPath)
 	var au [][]byte
 	var auPTS int64
 	havePTS := false
@@ -282,7 +264,7 @@ func (s *Server) runPipeline(ctx context.Context) {
 			flush()
 			s.log.Info("rtsp: pipeline stopped")
 			return
-		case sample, ok := <-parser.Samples():
+		case sample, ok := <-sub.Samples():
 			if !ok {
 				flush()
 				return
