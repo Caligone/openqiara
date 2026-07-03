@@ -18,6 +18,17 @@ const (
 	retained           = true
 	connectTimeout     = 10 * time.Second
 	publishTimeout     = 5 * time.Second
+
+	keepAlive            = 30 * time.Second
+	reconnectInterval    = 10 * time.Second
+	maxReconnectInterval = 30 * time.Second
+
+	// watchdogInterval is how often the watchdog checks the live connection.
+	// watchdogGrace is how long the client may stay disconnected before the
+	// watchdog forces a full Disconnect+Connect cycle — a belt-and-braces
+	// escape hatch for paho states that never fire ConnectionLostHandler.
+	watchdogInterval = 30 * time.Second
+	watchdogGrace    = 90 * time.Second
 )
 
 // HAPublisher implements Publisher for Home Assistant MQTT auto-discovery.
@@ -27,10 +38,14 @@ type HAPublisher struct {
 	prefix  string // topic prefix, default "openqiara"
 	log     *slog.Logger
 	sensors []camera.Sensor // remembered for re-publish on (re)connect
+	cfg     Config          // remembered so the watchdog can rebuild the client
 
 	// onConnect is invoked after discovery is (re)published on every successful
 	// connection, letting the caller refresh live state (sensor/alarm). May be nil.
 	onConnect func()
+
+	watchdogOnce sync.Once
+	disconnected time.Time // zero when connected; set on first observed disconnect
 }
 
 // SetOnConnect registers a callback invoked after discovery is (re)published on
@@ -61,12 +76,26 @@ func (p *HAPublisher) Connect(ctx context.Context, cfg Config, sensors []camera.
 	}
 	p.prefix = prefix
 	p.sensors = sensors
+	p.cfg = cfg
 
 	opts := mqtt.NewClientOptions().
 		AddBroker(cfg.Broker).
 		SetClientID("openqiara").
 		SetCleanSession(false).
 		SetAutoReconnect(true).
+		// ConnectRetry rearms reconnection even when the very first Connect()
+		// fails (broker down at boot after a power cut). Without it, paho gives
+		// up permanently on initial failure.
+		SetConnectRetry(true).
+		SetConnectRetryInterval(reconnectInterval).
+		// Bound the reconnect backoff — paho's default max is 10 min, far too
+		// long for a home alarm to stay silent after a broker blip.
+		SetMaxReconnectInterval(maxReconnectInterval).
+		// KeepAlive forces regular PINGREQ so a socket that dies silently
+		// (broker reboot, NAT drop) is detected and reconnection kicks in.
+		// The camera has no RTC: a boot-time clock jump can otherwise leave
+		// paho's keepalive goroutine wedged with no lost-connection callback.
+		SetKeepAlive(keepAlive).
 		SetConnectTimeout(connectTimeout).
 		SetConnectionLostHandler(func(_ mqtt.Client, err error) {
 			p.log.Warn("mqtt connection lost", "error", err)
@@ -103,7 +132,58 @@ func (p *HAPublisher) Connect(ctx context.Context, cfg Config, sensors []camera.
 		p.log.Warn("mqtt connect failed, will retry in background", "broker", cfg.Broker, "error", err)
 	}
 
+	p.watchdogOnce.Do(func() { go p.watchdog(ctx) })
+
 	return nil
+}
+
+// watchdog is a last-resort recovery loop. paho's SetAutoReconnect handles the
+// common cases, but on this RTC-less camera a boot-time clock jump can wedge
+// paho with no ConnectionLostHandler firing and IsConnected() stuck false. If
+// the client stays disconnected beyond watchdogGrace, we force a full teardown
+// and reconnect. Runs until ctx is cancelled.
+func (p *HAPublisher) watchdog(ctx context.Context) {
+	ticker := time.NewTicker(watchdogInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			p.mu.Lock()
+			connected := p.client != nil && p.client.IsConnected()
+			if connected {
+				p.disconnected = time.Time{}
+				p.mu.Unlock()
+				continue
+			}
+			if p.disconnected.IsZero() {
+				p.disconnected = time.Now()
+				p.mu.Unlock()
+				continue
+			}
+			if time.Since(p.disconnected) < watchdogGrace {
+				p.mu.Unlock()
+				continue
+			}
+			client := p.client
+			p.disconnected = time.Now() // reset grace so we don't hammer
+			p.mu.Unlock()
+
+			p.log.Warn("mqtt watchdog: disconnected past grace, forcing reconnect",
+				"grace", watchdogGrace)
+			if client != nil {
+				client.Disconnect(250)
+				token := client.Connect()
+				if token.WaitTimeout(connectTimeout) && token.Error() == nil {
+					p.log.Info("mqtt watchdog: reconnect ok")
+				} else {
+					p.log.Warn("mqtt watchdog: reconnect failed, will retry")
+				}
+			}
+		}
+	}
 }
 
 // republishDiscovery (re)publishes all retained discovery configs. Called from
