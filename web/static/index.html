@@ -342,6 +342,11 @@ a { color: var(--primary); }
       <!-- Un seul bouton Enregistrer -->
       <button class="btn btn-primary" id="cfg-save-all" style="margin-top:16px">Enregistrer</button>
       <div id="cfg-msg"></div>
+
+      <!-- Système -->
+      <div style="font-weight:600;font-size:14px;margin:24px 0 8px;border-top:1px solid var(--border);padding-top:16px">Système</div>
+      <p style="color:var(--muted);font-size:13px;margin:0 0 8px">Redémarre la caméra. Le flux vidéo et l'appairage sont coupés ~1 à 2 min.</p>
+      <button class="btn" style="background:var(--danger);color:#fff" onclick="rebootCamera()" id="reboot-btn">Redémarrer la caméra</button>
     </div>
   </div>
 </div>
@@ -1092,6 +1097,29 @@ async function checkForUpdate() {
     document.getElementById('update-banner').style.display = 'block';
   } catch (e) {
     // Silencieux : pas de réseau, pas grave.
+  }
+}
+
+async function rebootCamera() {
+  if (!confirm('Redémarrer la caméra ? Le flux vidéo et l\'appairage seront coupés ~1 à 2 min.')) return;
+  const btn = document.getElementById('reboot-btn');
+  btn.disabled = true;
+  btn.textContent = 'Redémarrage...';
+  try {
+    const r = await fetch(API + '/api/reboot', { method: 'POST' });
+    if (!r.ok) {
+      alert('Échec : ' + (await r.text()));
+      btn.disabled = false;
+      btn.textContent = 'Redémarrer la caméra';
+      return;
+    }
+    // La cam redémarre : on attend puis on recharge quand elle revient.
+    btn.textContent = 'Caméra en cours de redémarrage...';
+    setTimeout(() => location.reload(), 90000);
+  } catch (e) {
+    // La connexion peut tomber avant la réponse : c'est attendu.
+    btn.textContent = 'Caméra en cours de redémarrage...';
+    setTimeout(() => location.reload(), 90000);
   }
 }
 
