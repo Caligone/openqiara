@@ -15,6 +15,12 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history + tags so we can diff against the previous tag to
+          # build the changelog (git-log based — the repo commits straight to
+          # master without PRs, so GitHub's generate_release_notes lists
+          # nothing useful).
+          fetch-depth: 0
 
       - uses: actions/setup-go@v5
         with:
@@ -46,6 +52,33 @@ jobs:
       - name: SHA256 checksums
         run: sha256sum openqiarad-linux-arm7 scripts/sd_setup.sh scripts/patch_fbxhome.sh scripts/camera_boot.sh > SHA256SUMS
 
+      - name: Generate release notes
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          # Tag précédent = le tag juste avant celui-ci par DATE de création
+          # (pas via git describe ^, qui remonte le graphe de commits et se
+          # trompe sur un re-tag pointant le même commit).
+          PREV=$(git tag --sort=-creatordate | grep -A1 -x "$TAG" | tail -n +2 | head -1)
+          {
+            if [ -z "$PREV" ]; then
+              echo "## Changements"; echo
+              git log --pretty="- %s" "$TAG"
+              echo; echo "_Première release._"
+            else
+              N=$(git log --oneline "$PREV..$TAG" | wc -l | tr -d ' ')
+              COMPARE="**Full Changelog**: https://github.com/${GITHUB_REPOSITORY}/compare/${PREV}...${TAG}"
+              if [ "$N" = "0" ]; then
+                echo "_Aucun changement de code depuis ${PREV} (re-tag)._"
+                echo; echo "$COMPARE"
+              else
+                echo "## Changements"; echo
+                git log --pretty="- %s" "$PREV..$TAG"
+                echo; echo "$COMPARE"
+              fi
+            fi
+          } > RELEASE_NOTES.md
+          echo "--- notes générées ---"; cat RELEASE_NOTES.md
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -55,5 +88,5 @@ jobs:
             scripts/patch_fbxhome.sh
             scripts/camera_boot.sh
             SHA256SUMS
-          generate_release_notes: true
+          body_path: RELEASE_NOTES.md
           prerelease: ${{ contains(github.ref_name, '-alpha') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-rc') }}
