@@ -101,6 +101,26 @@ rotate_log() {
 }
 rotate_log /data/openqiarad.log
 rotate_log /data/hlcamd.log
+# fbxhome.log grows unbounded (~5 MB observed) and dnsmasq/boot_debug pile up
+# on the tiny /data partition (20 MB) — cap them too, or the SD fills and the
+# camera fails to boot (reported on the forum).
+rotate_log /data/fbxhome.log
+rotate_log /data/dnsmasq.log
+rotate_log /data/boot_debug.log
+
+# Purge lumberjack's timestamped rotations (openqiarad-2026-...-.log) and any
+# orphaned OTA binaries left on /media by past installs or manual deploys.
+# Keep only: the live binary (/media/openqiarad, no suffix), its .old rollback,
+# the .new pending-swap, and the .rollback. Everything else (.bak*, .pre*,
+# _new, .rc2upx…) is a leftover safe to remove.
+rm -f /data/openqiarad-*.log 2>/dev/null
+for b in /media/openqiarad /media/openqiarad.* /media/openqiarad_*; do
+    [ -e "$b" ] || continue
+    case "$b" in
+        /media/openqiarad|/media/openqiarad.old|/media/openqiarad.new|/media/openqiarad.rollback) ;;
+        *) rm -f "$b" 2>/dev/null ;;
+    esac
+done
 
 # Wait for charmux and MCU to be ready
 sleep 10

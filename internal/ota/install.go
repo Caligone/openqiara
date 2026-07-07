@@ -12,8 +12,55 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
+
+// minStageFreeBytes est l'espace libre minimum exigé sur StageDir avant de
+// lancer un download. Un binaire fait ~12 MB ; 30 MB laisse la marge pour le
+// .new + le .old de backup sans risquer un fichier tronqué qui remplit la SD
+// (cause racine des cartes SD pleines → boot cassé, cf. rapports terrain).
+const minStageFreeBytes = 30 * 1024 * 1024
+
+// freeBytes retourne l'espace disponible (à l'utilisateur non-root) sur le
+// système de fichiers contenant path.
+func freeBytes(path string) (uint64, error) {
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(path, &st); err != nil {
+		return 0, err
+	}
+	return uint64(st.Bavail) * uint64(st.Bsize), nil
+}
+
+// purgeStaleBinaries supprime les binaires OTA orphelins sur StageDir pour
+// éviter qu'ils s'accumulent (chaque install laisse potentiellement un .new,
+// et les déploiements manuels laissent des .bak/.pre/.old divers). On garde
+// le binaire courant (TargetPath, souvent un symlink vers StageDir) et le
+// dernier backup .old ; tout autre openqiarad.* est purgé. Best-effort : les
+// erreurs de suppression sont ignorées (au pire on n'a pas gagné de place).
+func (in *Installer) purgeStaleBinaries() {
+	keep := map[string]bool{
+		filepath.Base(in.cfg.BackupPath): true, // openqiarad.old (rollback)
+	}
+	// Résoudre le binaire courant s'il pointe dans StageDir (symlink).
+	if real, err := filepath.EvalSymlinks(in.cfg.TargetPath); err == nil {
+		keep[filepath.Base(real)] = true
+	}
+	entries, err := os.ReadDir(in.cfg.StageDir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasPrefix(name, "openqiarad") {
+			continue
+		}
+		if keep[name] {
+			continue
+		}
+		_ = os.Remove(filepath.Join(in.cfg.StageDir, name))
+	}
+}
 
 // PendingMarkerPath contient le chemin du binaire staged en attente de swap.
 // Déposé par onComplete avant reboot ; lu et consommé par boot.sh au
@@ -178,6 +225,17 @@ func (in *Installer) fail(err error) {
 func (in *Installer) run(ctx context.Context, tagName string) {
 	binStagePath := filepath.Join(in.cfg.StageDir, "openqiarad.new")
 	bootStagePath := filepath.Join(in.cfg.StageDir, "boot.sh.new")
+
+	// 0. Ménage : purge les binaires OTA orphelins, puis vérifie qu'il reste
+	//    assez d'espace. Sans ça, un /media plein produit un download tronqué
+	//    (SHA échoue mais le fichier reste) qui aggrave la saturation — cause
+	//    racine des SD pleines et boots cassés.
+	in.purgeStaleBinaries()
+	if free, err := freeBytes(in.cfg.StageDir); err == nil && free < minStageFreeBytes {
+		in.fail(fmt.Errorf("not enough space on %s: %d MB free, need %d MB (SD nearly full — clean up old files)",
+			in.cfg.StageDir, free/(1024*1024), minStageFreeBytes/(1024*1024)))
+		return
+	}
 
 	// 1. Download + verify binaire.
 	if err := in.downloadAndVerify(ctx, tagName, AssetName, binStagePath); err != nil {
