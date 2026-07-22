@@ -123,7 +123,9 @@ mort — pas des bugs à corriger en bidouillant `openqiarad`.
 
 ## Démarrage rapide
 
-**Prérequis :** macOS avec [Homebrew](https://brew.sh) et un réseau WiFi 2.4 GHz.
+**Prérequis :** macOS avec [Homebrew](https://brew.sh) **ou** Linux (Ubuntu/Debian),
+et un réseau WiFi 2.4 GHz. Deux scripts d'install équivalents sont fournis :
+`sd_setup.sh` (macOS) et `sd_setup_ubuntu.sh` (Linux).
 
 ### 1. Sauvegarde de la carte SD
 
@@ -143,6 +145,16 @@ sudo dd if=/dev/r${DISK}s2 bs=1M of=backup_data.img
 sudo dd if=/dev/r${DISK}s3 bs=1M of=backup_media.img
 ```
 
+Sur **Linux**, repère le disque avec `lsblk` et dumpe les partitions
+(`sdb1`/`sdb2`/`sdb3` sur un lecteur USB, `mmcblk0p1`… sur un contrôleur SD) :
+
+```bash
+DISK=sdb   # ajuster (lsblk)
+sudo dd if=/dev/${DISK}1 bs=1M of=backup_rootfs.img
+sudo dd if=/dev/${DISK}2 bs=1M of=backup_data.img
+sudo dd if=/dev/${DISK}3 bs=1M of=backup_media.img
+```
+
 Garde ces fichiers en lieu sûr — c'est ton billet retour si quelque chose tourne mal.
 
 ### 2. Télécharger les artefacts
@@ -159,7 +171,8 @@ VERSION=v0.1.0-alpha.3   # ajuster selon la dernière release publiée
 # Binaire daemon (ARMv7) + scripts d'install
 BASE=https://github.com/Caligone/openqiara/releases/download/$VERSION
 curl -LO $BASE/openqiarad-linux-arm7
-curl -LO $BASE/sd_setup.sh
+curl -LO $BASE/sd_setup.sh          # macOS ; sur Linux : curl -LO $BASE/sd_setup_ubuntu.sh
+curl -LO $BASE/camera_boot.sh   # requis : sd_setup.sh le copie dans /data/boot.sh
 curl -LO $BASE/patch_fbxhome.sh
 curl -LO $BASE/SHA256SUMS
 
@@ -169,15 +182,35 @@ shasum -a 256 -c SHA256SUMS
 chmod +x sd_setup.sh patch_fbxhome.sh
 ```
 
+> `sd_setup.sh` cherche `camera_boot.sh` à côté de lui (install release-only)
+> ou dans `scripts/` (checkout du repo). Garde-les dans le même dossier.
+
 Si tu préfères compiler toi-même, voir la section [Compilation](#compilation) plus bas.
 
 ### 3. Préparer la carte SD
+
+**macOS :**
 
 ```bash
 brew install e2fsprogs
 
 ./sd_setup.sh \
     --disk disk4 \
+    --wifi-ssid "MonReseau" \
+    --wifi-pass "MonMotDePasse" \
+    --daemon openqiarad-linux-arm7 \
+    --ssh-pubkey ~/.ssh/id_ed25519.pub
+```
+
+**Linux (Ubuntu/Debian) :**
+
+```bash
+sudo apt install e2fsprogs   # généralement déjà présent
+
+# --disk = nom du périphérique bloc sans /dev/ (repère-le avec: lsblk)
+#   lecteur USB : sdb   |   contrôleur eMMC/SD : mmcblk0
+sudo ./sd_setup_ubuntu.sh \
+    --disk sdb \
     --wifi-ssid "MonReseau" \
     --wifi-pass "MonMotDePasse" \
     --daemon openqiarad-linux-arm7 \

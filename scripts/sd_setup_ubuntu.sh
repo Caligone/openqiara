@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
-# Prepare a Qiara camera SD card for OpenQiara — entirely offline from a Mac.
+
+# Prepare a Qiara camera SD card for OpenQiara — entirely offline from Linux (Ubuntu/Debian).
+# Adapted from the original macOS version (scripts/sd_setup.sh).
 #
 # Prerequisites:
-#   - macOS with e2fsprogs installed (brew install e2fsprogs)
-#   - The SD card from a stock Qiara camera inserted in the Mac
-#   - A pre-built openqiarad binary (run: make build-arm)
+# - Ubuntu/Debian with e2fsprogs installed (usually preinstalled; otherwise: sudo apt install e2fsprogs)
+# - The SD card from a stock Qiara camera inserted in the machine
+# - A pre-built openqiarad binary (run: make build-arm)
 #
 # Usage:
-#   ./scripts/sd_setup.sh --disk disk4 --wifi-ssid "MyNetwork" --wifi-pass "MyPassword"
+#   sudo ./scripts/sd_setup_ubuntu.sh --disk sdb --wifi-ssid "MyNetwork" --wifi-pass "MyPassword"
+#   sudo ./scripts/sd_setup_ubuntu.sh --disk mmcblk0 --wifi-ssid "MyNetwork" --wifi-pass "MyPassword"
 #
 # Options:
-#   --disk         macOS disk identifier (e.g. disk4) — REQUIRED
+#   --disk         Linux block device name without /dev/ (e.g. sdb, mmcblk0) — REQUIRED
 #   --wifi-ssid    WiFi network name — REQUIRED
 #   --wifi-pass    WiFi password — REQUIRED
 #   --daemon       Path to openqiarad binary (default: bin/openqiarad)
@@ -20,7 +23,6 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-
 DISK=""
 WIFI_SSID=""
 WIFI_PASS=""
@@ -28,29 +30,48 @@ DAEMON_BIN="${REPO_ROOT}/bin/openqiarad"
 SSH_PUBKEY=""
 DRY_RUN=false
 
-# e2fsprogs tools (Homebrew puts them in sbin, not in PATH)
-DEBUGFS="$(brew --prefix e2fsprogs 2>/dev/null)/sbin/debugfs"
-if [ ! -x "$DEBUGFS" ]; then
-    echo "ERROR: debugfs not found. Install with: brew install e2fsprogs"
+# --- Locate e2fsprogs tools ---
+# On Ubuntu/Debian these are normally already on PATH (or in /sbin), unlike
+# the Homebrew install on macOS which hides them under a keg prefix.
+find_tool() {
+    local name="$1"
+    for candidate in "$(command -v "$name" 2>/dev/null)" "/sbin/$name" "/usr/sbin/$name"; do
+        if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+DEBUGFS="$(find_tool debugfs || true)"
+if [ -z "$DEBUGFS" ]; then
+    echo "ERROR: debugfs not found. Install with: sudo apt install e2fsprogs"
+    exit 1
+fi
+
+MKE2FS="$(find_tool mke2fs || true)"
+if [ -z "$MKE2FS" ]; then
+    echo "ERROR: mke2fs not found. Install with: sudo apt install e2fsprogs"
     exit 1
 fi
 
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --disk)       DISK="$2"; shift 2;;
-        --wifi-ssid)  WIFI_SSID="$2"; shift 2;;
-        --wifi-pass)  WIFI_PASS="$2"; shift 2;;
-        --daemon)     DAEMON_BIN="$2"; shift 2;;
+        --disk) DISK="$2"; shift 2;;
+        --wifi-ssid) WIFI_SSID="$2"; shift 2;;
+        --wifi-pass) WIFI_PASS="$2"; shift 2;;
+        --daemon) DAEMON_BIN="$2"; shift 2;;
         --ssh-pubkey) SSH_PUBKEY="$2"; shift 2;;
-        --dry-run)    DRY_RUN=true; shift;;
+        --dry-run) DRY_RUN=true; shift;;
         *) echo "Unknown option: $1"; exit 1;;
     esac
 done
 
 if [ -z "$DISK" ] || [ -z "$WIFI_SSID" ] || [ -z "$WIFI_PASS" ]; then
-    echo "Usage: $0 --disk <diskN> --wifi-ssid <ssid> --wifi-pass <password>"
+    echo "Usage: $0 --disk <device> --wifi-ssid <ssid> --wifi-pass <password>"
     echo ""
-    echo "Find your SD card disk with: diskutil list"
+    echo "Find your SD card device with: lsblk"
     exit 1
 fi
 
@@ -70,8 +91,20 @@ for pair in "WIFI_SSID:--wifi-ssid" "WIFI_PASS:--wifi-pass"; do
     esac
 done
 
-PART_ROOTFS="/dev/${DISK}s1"
-PART_DATA="/dev/${DISK}s2"
+# --- Partition naming ---
+# Linux block devices use different partition-suffix conventions depending
+# on the device family:
+#   - SCSI/USB card readers:  /dev/sdb  -> /dev/sdb1,  /dev/sdb2
+#   - eMMC/SD host controller: /dev/mmcblk0 -> /dev/mmcblk0p1, /dev/mmcblk0p2
+#   - NVMe (not expected here): /dev/nvme0n1 -> /dev/nvme0n1p1
+# This mirrors the macOS diskNs1/diskNs2 convention used in the original script.
+if [[ "$DISK" =~ (mmcblk|nvme) ]]; then
+    PART_SUFFIX="p"
+else
+    PART_SUFFIX=""
+fi
+PART_ROOTFS="/dev/${DISK}${PART_SUFFIX}1"
+PART_DATA="/dev/${DISK}${PART_SUFFIX}2"
 
 # write_boot_sh <dest> — copies scripts/camera_boot.sh (the single source of
 # truth for /data/boot.sh) to <dest>. Located either in the repo checkout
@@ -92,16 +125,17 @@ write_boot_sh() {
     cat "$CAMERA_BOOT_SH" > "$1"
 }
 
-# Sanity checks
+# --- Sanity checks ---
 if [ ! -b "/dev/${DISK}" ]; then
     echo "ERROR: /dev/${DISK} does not exist"
     exit 1
 fi
 
-# Verify this looks like a Qiara SD card (3 Linux partitions)
-PART_COUNT=$(diskutil list "$DISK" | grep -c "Linux" || true)
+# Verify this looks like a Qiara SD card (3 Linux partitions).
+# lsblk replaces macOS's `diskutil list` here.
+PART_COUNT=$(lsblk -no NAME "/dev/${DISK}" | tail -n +2 | wc -l)
 if [ "$PART_COUNT" -lt 3 ]; then
-    echo "ERROR: Expected 3 Linux partitions on $DISK, found $PART_COUNT"
+    echo "ERROR: Expected 3 partitions on $DISK, found $PART_COUNT"
     echo "Are you sure this is a Qiara camera SD card?"
     exit 1
 fi
@@ -122,10 +156,10 @@ if ! echo "$DAEMON_ARCH" | grep -q "ARM"; then
 fi
 
 echo "=== OpenQiara SD Setup ==="
-echo "Disk:       /dev/$DISK"
-echo "WiFi SSID:  $WIFI_SSID"
-echo "Daemon:     $DAEMON_BIN ($(du -h "$DAEMON_BIN" | cut -f1))"
-[ -n "$SSH_PUBKEY" ] && echo "SSH key:    $SSH_PUBKEY"
+echo "Disk: /dev/$DISK"
+echo "WiFi SSID: $WIFI_SSID"
+echo "Daemon: $DAEMON_BIN ($(du -h "$DAEMON_BIN" | cut -f1))"
+[ -n "$SSH_PUBKEY" ] && echo "SSH key: $SSH_PUBKEY"
 echo ""
 
 if [ "$DRY_RUN" = true ]; then
@@ -141,9 +175,23 @@ if [[ ! $REPLY =~ ^[Yy]$ ]]; then
     exit 1
 fi
 
-# macOS resets device permissions on each SD insert — fix them
-echo "Fixing device permissions (requires sudo)..."
-sudo chmod 666 /dev/${DISK}s*
+# On Linux, udev normally grants block-device access to the `disk` group
+# and this script is expected to run as root (sudo), so there is no
+# equivalent of macOS's per-insertion permission reset to work around.
+if [ "$(id -u)" -ne 0 ]; then
+    echo "ERROR: this script must be run as root (sudo) to write to /dev/$DISK"
+    exit 1
+fi
+
+# Make sure nothing has auto-mounted the card's partitions (GNOME/KDE
+# file managers do this automatically on insertion) before we write to
+# them with debugfs/mke2fs.
+for part in "$PART_ROOTFS" "$PART_DATA"; do
+    if mountpoint_dir=$(lsblk -no MOUNTPOINT "$part" 2>/dev/null) && [ -n "$mountpoint_dir" ]; then
+        echo "Unmounting $part (was mounted at $mountpoint_dir)..."
+        umount "$part"
+    fi
+done
 
 # --- Step 1: Patch rootfs (partition 1) ---
 echo ""
@@ -162,12 +210,9 @@ else
     # Append OpenQiara autostart
     # WiFi: hlconnman reads /data/wifi_ssid + /data/wifi_pass automatically
     cat >> "$TMPDIR/rcS.real" << 'PATCH'
-
-
 # === OpenQiara autostart (added by sd_setup) ===
 [ -x /data/boot.sh ] && /data/boot.sh >> /data/boot_debug.log 2>&1 &
 PATCH
-
     printf "rm /etc/init.d/rcS.real\nwrite $TMPDIR/rcS.real /etc/init.d/rcS.real\nset_inode_field /etc/init.d/rcS.real mode 0100755\n" | $DEBUGFS -w "$PART_ROOTFS" 2>/dev/null
     echo "  rcS.real patched ✓"
 fi
@@ -178,7 +223,6 @@ echo "[2/3] Formatting and writing files to /data partition..."
 
 # Reformat with optimal settings: 4K blocks (efficient for the 10MB daemon
 # binary), minimal inodes, no journal, no reserved blocks.
-MKE2FS="$(brew --prefix e2fsprogs 2>/dev/null)/sbin/mke2fs"
 $MKE2FS -F -t ext4 -O ^has_journal -b 4096 -N 128 -m 0 "$PART_DATA" 2>/dev/null
 echo "  partition formatted ✓"
 
@@ -236,9 +280,9 @@ echo ""
 echo "=== Done! ==="
 echo ""
 echo "Next steps:"
-echo "  1. Eject the SD card:  diskutil eject $DISK"
+echo "  1. Eject the SD card: sudo eject /dev/$DISK"
 echo "  2. Insert the SD card in the camera"
 echo "  3. Power on the camera"
 echo "  4. Wait ~60s for boot + WiFi connection"
-echo "  5. Find the camera:  arp -a | grep lwip"
+echo "  5. Find the camera: arp -a | grep lwip   (or: ip neigh)"
 echo "  6. Open http://<camera-ip>:80"
