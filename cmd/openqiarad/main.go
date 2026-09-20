@@ -608,7 +608,7 @@ func main() {
 				payload = "DISARM"
 			}
 			if mqttPub != nil {
-				if err := mqttPub.HAPublisher().PublishRaw(ctx, topic, []byte(payload)); err != nil {
+				if err := mqttPub.HAPublisher().PublishCommand(ctx, topic, []byte(payload)); err != nil {
 					logger.Warn("alarmo command publish failed", "topic", topic, "error", err)
 				} else {
 					logger.Info("alarm command → alarmo", "topic", topic, "payload", payload, "source", source)

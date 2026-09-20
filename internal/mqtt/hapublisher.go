@@ -376,11 +376,23 @@ func (p *HAPublisher) IsConnected() bool {
 	return p.client != nil && p.client.IsConnected()
 }
 
-// PublishRaw publishes a raw payload to a topic with retain.
+// PublishRaw publishes a raw payload to a topic with retain. Use it for
+// discovery configs and state, which must survive a broker/HA reconnect.
 func (p *HAPublisher) PublishRaw(ctx context.Context, topic string, payload []byte) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.publish(ctx, topic, payload, retained)
+}
+
+// PublishCommand publishes a one-shot command payload to a topic WITHOUT retain.
+// A command is an action, not state: a retained command is replayed by the
+// broker to every subscriber that (re)connects, so a retained ARM_AWAY makes
+// Alarmo re-arm itself after each HA restart from a stale value. Commands must
+// always be non-retained.
+func (p *HAPublisher) PublishCommand(ctx context.Context, topic string, payload []byte) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.publish(ctx, topic, payload, false)
 }
 
 // Close disconnects the MQTT client.
