@@ -754,7 +754,6 @@ func buildSensorList(ctx context.Context, cam camera.Client, store *config.Store
 		if live, ok := liveMap[s.ID]; ok {
 			sensors[i].Open = live.Open
 			sensors[i].Motion = live.Motion
-			sensors[i].Tamper = live.Tamper
 			sensors[i].LastSeen = live.LastSeen
 			sensors[i].Reachable = live.Reachable
 			sensors[i].KPDState = live.KPDState
@@ -1096,7 +1095,7 @@ func lookupCached(cam camera.Client, nodeID int) camera.Sensor {
 }
 
 // sensorInAlarm returns true if the sensor is currently in its "alarm" state,
-// i.e. open door, motion detected, or tamper.
+// i.e. open door or motion detected.
 func sensorInAlarm(s camera.Sensor) bool {
 	switch s.Type {
 	case "DWS":
@@ -1104,7 +1103,9 @@ func sensorInAlarm(s camera.Sensor) bool {
 	case "PIR":
 		return s.Motion
 	case "SRN":
-		return s.Tamper
+		// A siren is an actuator: it never triggers the alarm by itself.
+		// DomusRF sensors expose no usable tamper state (see issue #30).
+		return false
 	default:
 		return false
 	}

@@ -148,7 +148,7 @@ func (c *FbxhomeClient) CachedSensors() []Sensor {
 //
 // Merge non-destructif : on conserve les valeurs existantes (battery,
 // temperature, item_id…) du cache et on remplace uniquement Open/Motion/
-// Tamper/LastSeen. Les events temps réel ne portent pas ces métadonnées.
+// LastSeen. Les events temps réel ne portent pas ces métadonnées.
 func (c *FbxhomeClient) UpdateCachedSensor(s Sensor) {
 	if s.ID == 0 {
 		return
@@ -162,7 +162,6 @@ func (c *FbxhomeClient) UpdateCachedSensor(s Sensor) {
 	}
 	cur.Open = s.Open
 	cur.Motion = s.Motion
-	cur.Tamper = s.Tamper
 	if s.LastSeen > cur.LastSeen {
 		cur.LastSeen = s.LastSeen
 	}
@@ -207,7 +206,6 @@ func (c *FbxhomeClient) Sensors(ctx context.Context) ([]Sensor, error) {
 		if cached, ok := cache[s.ID]; ok {
 			s.Open = cached.Open
 			s.Motion = cached.Motion
-			s.Tamper = cached.Tamper
 			if cached.Battery > 0 {
 				s.Battery = cached.Battery
 			}

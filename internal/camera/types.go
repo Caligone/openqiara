@@ -9,12 +9,12 @@ type Sensor struct {
 	Battery     int    `json:"battery"`     // percentage
 	Temperature int    `json:"temperature"` // value from API (divide by 10 for Celsius)
 	Reachable   bool   `json:"reachable"`
-	Open        bool   `json:"open"`             // DWS: door/window open
-	Motion      bool   `json:"motion"`           // PIR: motion detected
-	Tamper      bool   `json:"tamper"`           // tamper switch
-	KPDState    string `json:"kpd_state,omitempty"` // KPD: "disarmed", "armed_away", "armed_night"
-	LastSeen    int64  `json:"last_seen"`
-	Label       string `json:"label,omitempty"` // user-defined name
+	Open        bool   `json:"open"`   // DWS: door/window open
+	Motion      bool   `json:"motion"` // PIR: motion detected
+	// No tamper field: DomusRF sensors expose no usable tamper state (issue #30).
+	KPDState string `json:"kpd_state,omitempty"` // KPD: "disarmed", "armed_away", "armed_night"
+	LastSeen int64  `json:"last_seen"`
+	Label    string `json:"label,omitempty"` // user-defined name
 }
 
 // SensorEvent is emitted when a sensor state changes.
@@ -73,11 +73,11 @@ type domusNodesResponse struct {
 }
 
 type domusNode struct {
-	ID        int            `json:"id"`
-	TypeName  string         `json:"type_name"`
-	AdapterID int            `json:"adapter_id"`
-	Values    domusValues    `json:"values"`
-	ItemID    string         `json:"item_id"`
+	ID        int         `json:"id"`
+	TypeName  string      `json:"type_name"`
+	AdapterID int         `json:"adapter_id"`
+	Values    domusValues `json:"values"`
+	ItemID    string      `json:"item_id"`
 }
 
 type domusValues struct {
@@ -123,7 +123,7 @@ type endpointsWriteRequest struct {
 }
 
 type endpointWriteQuery struct {
-	NodeID    int              `json:"node_id"`
+	NodeID    int             `json:"node_id"`
 	Endpoints []endpointWrite `json:"eps"`
 }
 
