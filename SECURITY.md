@@ -38,7 +38,7 @@ listées ici pour référence :
 - Pas de protection CSRF, pas de rate limiting sur l'auth
 - Web UI : certains points d'injection HTML non échappés systématiquement
 - `/events` (push fbxhome → openqiarad) accessible sans auth
-- Endpoints `/api/debug/pkt` et `/api/debug/siren/sequence` activables
+- Endpoints `/api/v1/commands/debug/pkt` et `/api/v1/commands/debug/siren/sequence` activables
   via `-debug` — peuvent brick le MCU (opcodes `0x03`, `0x08`)
 - Le boot script ouvre tous les ports en INPUT (politique ACCEPT all)
 

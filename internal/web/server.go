@@ -218,68 +218,10 @@ func (s *Server) SetAlarmState(state string) {
 // Start begins serving on the given address (e.g. ":80") in a new goroutine.
 // Returns immediately. Call Shutdown to stop.
 func (s *Server) Start(addr string) error {
-	mux := http.NewServeMux()
-
-	// API routes
-	mux.HandleFunc("GET /api/status", s.cors(s.handleStatus))
-	mux.HandleFunc("GET /api/sensors", s.cors(s.handleSensors))
-	mux.HandleFunc("POST /api/sensors/pair", s.cors(s.handleStartPairing))
-	mux.HandleFunc("GET /api/sensors/pair", s.cors(s.handlePollPairing))
-	mux.HandleFunc("DELETE /api/sensors/pair", s.cors(s.handleStopPairing))
-	mux.HandleFunc("DELETE /api/sensors/{id}", s.cors(s.handleDeleteSensor))
-	mux.HandleFunc("PUT /api/sensors/{id}", s.cors(s.handleRenameSensor))
-	mux.HandleFunc("POST /api/stream", s.cors(s.handleOpenStream))
-	mux.HandleFunc("GET /api/config", s.cors(s.handleGetConfig))
-	mux.HandleFunc("PUT /api/config/mqtt", s.cors(s.handleUpdateMQTT))
-	mux.HandleFunc("PUT /api/config/homekit", s.cors(s.handleUpdateHomeKit))
-	mux.HandleFunc("PUT /api/config/admin", s.cors(s.handleUpdateAdmin))
-	mux.HandleFunc("PUT /api/config/alarm", s.cors(s.handleUpdateAlarm))
-	mux.HandleFunc("GET /api/config/fbxhome_alarm", s.cors(s.handleGetFbxhomeAlarm))
-	mux.HandleFunc("PUT /api/config/fbxhome_alarm", s.cors(s.handleUpdateFbxhomeAlarm))
-	mux.HandleFunc("PUT /api/config/web", s.cors(s.handleUpdateWeb))
-	mux.HandleFunc("GET /api/alarm", s.cors(s.handleGetAlarm))
-	mux.HandleFunc("POST /api/alarm", s.cors(s.handleSetAlarm))
-	mux.HandleFunc("GET /api/codes", s.cors(s.handleGetCodes))
-	mux.HandleFunc("POST /api/codes", s.cors(s.handleAddCode))
-	mux.HandleFunc("DELETE /api/codes", s.cors(s.handleDeleteCode))
-	mux.HandleFunc("POST /api/reboot", s.cors(s.handleReboot))
-	mux.HandleFunc("GET /api/update/check", s.cors(s.handleUpdateCheck))
-	mux.HandleFunc("POST /api/update/install", s.cors(s.handleUpdateInstall))
-	mux.HandleFunc("GET /api/update/status", s.cors(s.handleUpdateStatus))
-	mux.HandleFunc("POST /api/siren/test", s.cors(s.handleSirenTest))
-	mux.HandleFunc("POST /api/siren/alarm_test", s.cors(s.handleSirenAlarmTest))
-	mux.HandleFunc("POST /api/stream/start", s.cors(s.handleStartStream))
-	mux.HandleFunc("POST /api/shutter", s.cors(s.handleShutter))
-	mux.HandleFunc("GET /stream/", s.cors(s.handleHLSStream))
-	if s.debugEnabled {
-		mux.HandleFunc("POST /api/debug/pkt", s.cors(s.handleDebugPKT))
-		mux.HandleFunc("POST /api/debug/siren/sequence", s.cors(s.handleDebugSirenSeq))
-	}
-	// Server-sent events stream (alarm, sensors, status).
-	mux.HandleFunc("GET /api/events", s.cors(s.handleEvents))
-
-	// Push depuis hl_event_collectd (intercepte les webhooks cloud Free).
-	// Le DNS local résout *.srv.home-labs.fr → 127.0.0.1 ; le collectd
-	// pousse les events sur /events (sensor events, alarm transitions,
-	// shutter, etc.) et les notifications sur /notifications (IV events
-	// type human/pet detection). On accepte les POST sans auth — le
-	// hostname EUPID.srv.home-labs.fr résolu localement suffit comme garde.
-	//
-	// Si on répond autre chose que 200, hl_event_collectd met les events
-	// en queue retry et ne pousse plus rien d'autre tant que la queue n'est
-	// pas vidée — il faut donc handler les DEUX routes en 200 OK.
-	mux.HandleFunc("POST /events", s.handleFbxhomePush)
-	mux.HandleFunc("POST /notifications", s.handleFbxhomePush)
-	// CORS preflight
-	mux.HandleFunc("OPTIONS /api/", s.handleOptions)
-
-	// Static files (SPA)
-	staticSub, err := fs.Sub(s.staticFS, "static")
+	mux, err := s.routes()
 	if err != nil {
-		return fmt.Errorf("embed sub: %w", err)
+		return err
 	}
-	fileServer := http.FileServer(http.FS(staticSub))
-	mux.Handle("GET /", fileServer)
 
 	s.srv = &http.Server{
 		Addr:        addr,
@@ -300,6 +242,139 @@ func (s *Server) Start(addr string) error {
 	go s.tickLoop()
 
 	return nil
+}
+
+// routes construit le mux complet. Séparé de Start pour que les tests
+// puissent router de vraies requêtes sans ouvrir de socket.
+func (s *Server) routes() (*http.ServeMux, error) {
+	mux := http.NewServeMux()
+
+	// --- API v1 ---
+	//
+	// Deux familles cohabitent sous /api/v1, et la distinction est
+	// sémantique, pas cosmétique :
+	//
+	//   RESSOURCES (/sensors, /config, /alarm, /kpd) — un état qu'on lit et
+	//   qu'on écrit. GET est sûr, PUT est idempotent, la réponse décrit
+	//   l'état obtenu.
+	//
+	//   COMMANDES (/commands/*) — un effet matériel déclenché sur le MCU ou
+	//   la caméra : reboot, sirène, volet, flux, OTA. Non idempotentes,
+	//   asynchrones, sans état propre à lire. Leur 200 signifie ACCEPTÉ,
+	//   pas EFFECTUÉ : /commands/reboot répond avant de redémarrer, et
+	//   /commands/alarm renvoie un état optimiste que le mode alarmo
+	//   corrigera via MQTT quelques centaines de ms plus tard.
+	//
+	// Ne pas « corriger » les commandes en ressources REST : elles ne
+	// modélisent pas un état, elles déclenchent un effet.
+
+	// Ressources — capteurs
+	mux.HandleFunc("GET /api/v1/sensors", s.cors(s.handleSensors))
+	mux.HandleFunc("POST /api/v1/sensors/pair", s.cors(s.handleStartPairing))
+	mux.HandleFunc("GET /api/v1/sensors/pair/{session}", s.cors(s.handlePollPairing))
+	mux.HandleFunc("DELETE /api/v1/sensors/pair/{session}", s.cors(s.handleStopPairing))
+	mux.HandleFunc("DELETE /api/v1/sensors/{id}", s.cors(s.handleDeleteSensor))
+	mux.HandleFunc("PUT /api/v1/sensors/{id}", s.cors(s.handleUpdateSensor))
+
+	// Ressources — code PIN du clavier. Mono-KPD assumé : s'il y a
+	// plusieurs claviers appairés, on répond 409 plutôt que d'en choisir
+	// un au hasard (cf. requireSingleKPD).
+	mux.HandleFunc("GET /api/v1/kpd/code", s.cors(s.handleGetKPDCode))
+	mux.HandleFunc("PUT /api/v1/kpd/code", s.cors(s.handleSetKPDCode))
+	mux.HandleFunc("DELETE /api/v1/kpd/code", s.cors(s.handleDeleteKPDCode))
+
+	// Ressources — configuration. Chaque sous-ressource a son GET
+	// symétrique ; /api/v1/config reste l'agrégat de lecture.
+	mux.HandleFunc("GET /api/v1/config", s.cors(s.handleGetConfig))
+	mux.HandleFunc("GET /api/v1/config/mqtt", s.cors(s.handleGetMQTT))
+	mux.HandleFunc("PUT /api/v1/config/mqtt", s.cors(s.handleUpdateMQTT))
+	mux.HandleFunc("GET /api/v1/config/homekit", s.cors(s.handleGetHomeKit))
+	mux.HandleFunc("PUT /api/v1/config/homekit", s.cors(s.handleUpdateHomeKit))
+	mux.HandleFunc("GET /api/v1/config/admin", s.cors(s.handleGetAdmin))
+	mux.HandleFunc("PUT /api/v1/config/admin", s.cors(s.handleUpdateAdmin))
+	mux.HandleFunc("GET /api/v1/config/alarm", s.cors(s.handleGetAlarmConfig))
+	mux.HandleFunc("PUT /api/v1/config/alarm", s.cors(s.handleUpdateAlarm))
+	mux.HandleFunc("GET /api/v1/config/web", s.cors(s.handleGetWeb))
+	mux.HandleFunc("PUT /api/v1/config/web", s.cors(s.handleUpdateWeb))
+	mux.HandleFunc("GET /api/v1/config/fbxhome_alarm", s.cors(s.handleGetFbxhomeAlarm))
+	mux.HandleFunc("PUT /api/v1/config/fbxhome_alarm", s.cors(s.handleUpdateFbxhomeAlarm))
+
+	// Ressources — état courant (lecture seule)
+	mux.HandleFunc("GET /api/v1/status", s.cors(s.handleStatus))
+	mux.HandleFunc("GET /api/v1/alarm", s.cors(s.handleGetAlarm))
+	mux.HandleFunc("GET /api/v1/update", s.cors(s.handleUpdateCheck))
+	mux.HandleFunc("GET /api/v1/update/status", s.cors(s.handleUpdateStatus))
+
+	// Commandes — 200 = accepté, pas effectué.
+	mux.HandleFunc("POST /api/v1/commands/alarm", s.cors(s.handleSetAlarm))
+	mux.HandleFunc("POST /api/v1/commands/reboot", s.cors(s.handleReboot))
+	mux.HandleFunc("POST /api/v1/commands/shutter", s.cors(s.handleShutter))
+	mux.HandleFunc("POST /api/v1/commands/siren/test", s.cors(s.handleSirenTest))
+	mux.HandleFunc("POST /api/v1/commands/siren/alarm_test", s.cors(s.handleSirenAlarmTest))
+	mux.HandleFunc("POST /api/v1/commands/stream/start", s.cors(s.handleStartStream))
+	mux.HandleFunc("POST /api/v1/commands/stream/open", s.cors(s.handleOpenStream))
+	mux.HandleFunc("POST /api/v1/commands/update/install", s.cors(s.handleUpdateInstall))
+	if s.debugEnabled {
+		mux.HandleFunc("POST /api/v1/commands/debug/pkt", s.cors(s.handleDebugPKT))
+		mux.HandleFunc("POST /api/v1/commands/debug/siren/sequence", s.cors(s.handleDebugSirenSeq))
+	}
+
+	// Flux d'événements (SSE) et segments HLS.
+	mux.HandleFunc("GET /api/v1/events", s.cors(s.handleEvents))
+	mux.HandleFunc("GET /stream/", s.cors(s.handleHLSStream))
+
+	// Push depuis hl_event_collectd (intercepte les webhooks cloud Free).
+	// Le DNS local résout *.srv.home-labs.fr → 127.0.0.1 ; le collectd
+	// pousse les events sur /events (sensor events, alarm transitions,
+	// shutter, etc.) et les notifications sur /notifications (IV events
+	// type human/pet detection). On accepte les POST sans auth — le
+	// hostname EUPID.srv.home-labs.fr résolu localement suffit comme garde.
+	//
+	// Si on répond autre chose que 200, hl_event_collectd met les events
+	// en queue retry et ne pousse plus rien d'autre tant que la queue n'est
+	// pas vidée — il faut donc handler les DEUX routes en 200 OK.
+	mux.HandleFunc("POST /events", s.handleFbxhomePush)
+	mux.HandleFunc("POST /notifications", s.handleFbxhomePush)
+	// CORS preflight
+	mux.HandleFunc("OPTIONS /api/", s.handleOptions)
+
+	// Deux filets distincts, à ne pas confondre :
+	//
+	//   /api/v1/… inconnu → 404. C'est une route absente DANS la version
+	//   courante : une faute de frappe, une méthode non supportée, ou une
+	//   route pas encore déployée.
+	//
+	//   /api/… non versionné → 410. La ressource a existé et ne reviendra
+	//   pas. Sans ce filet, un vieux client tomberait sur le FileServer et
+	//   recevrait l'index.html en 200 — un échec silencieux bien pire.
+	//
+	// Le pattern /api/v1/ est plus spécifique que /api/, donc ServeMux le
+	// choisit en premier. Les confondre ferait répondre « utiliser /api/v1 »
+	// à un client déjà sur /api/v1, et surtout 410 est terminal : un cache
+	// est en droit de le mémoriser définitivement, ce qui condamnerait toute
+	// route v1 ajoutée plus tard.
+	//
+	// Enregistrés par méthode et non en pattern nu : un pattern sans méthode
+	// entre en conflit avec le `GET /` du FileServer (ServeMux panique au
+	// montage, "matches fewer methods but has a more general path pattern").
+	// HEAD est absent pour la même raison — ServeMux le traite comme un
+	// sous-ensemble de GET, donc `HEAD /api/` entrerait en conflit avec
+	// chaque `GET /api/v1/…`. Un HEAD est donc servi par le `GET /api/…`
+	// correspondant, sans corps de réponse : sans conséquence.
+	for _, m := range []string{"GET", "POST", "PUT", "DELETE", "PATCH"} {
+		mux.HandleFunc(m+" /api/v1/", s.cors(s.handleNotFoundV1))
+		mux.HandleFunc(m+" /api/", s.cors(s.handleGoneUnversioned))
+	}
+
+	// Static files (SPA)
+	staticSub, err := fs.Sub(s.staticFS, "static")
+	if err != nil {
+		return nil, fmt.Errorf("embed sub: %w", err)
+	}
+	fileServer := http.FileServer(http.FS(staticSub))
+	mux.Handle("GET /", fileServer)
+
+	return mux, nil
 }
 
 // tickLoop periodically pushes status and timer updates into the SSE hub.
@@ -565,10 +640,9 @@ func normalizeFingerprint(s string) string {
 }
 
 func (s *Server) handlePollPairing(w http.ResponseWriter, r *http.Request) {
-	sessionStr := r.URL.Query().Get("session")
-	session, err := strconv.Atoi(sessionStr)
+	session, err := strconv.Atoi(r.PathValue("session"))
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "paramètre 'session' invalide")
+		writeErr(w, http.StatusBadRequest, "session d'appairage invalide")
 		return
 	}
 
@@ -590,7 +664,7 @@ func (s *Server) handlePollPairing(w http.ResponseWriter, r *http.Request) {
 		})
 		// Marque le timestamp pour le KPD — son cycle bytecode post-pair
 		// prend ~10s ; les écritures de code PIN doivent attendre pour ne pas
-		// le corrompre. Cf. handleAddCode.
+		// le corrompre. Cf. handleSetKPDCode.
 		if sensor.Type == "KPD" {
 			s.kpdPairMu.Lock()
 			s.kpdPairedAt = time.Now()
@@ -609,10 +683,9 @@ func (s *Server) handlePollPairing(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStopPairing(w http.ResponseWriter, r *http.Request) {
-	sessionStr := r.URL.Query().Get("session")
-	session, err := strconv.Atoi(sessionStr)
+	session, err := strconv.Atoi(r.PathValue("session"))
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "paramètre 'session' invalide")
+		writeErr(w, http.StatusBadRequest, "session d'appairage invalide")
 		return
 	}
 
@@ -626,6 +699,13 @@ func (s *Server) handleStopPairing(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDeleteSensor(w http.ResponseWriter, r *http.Request) {
 	idStr := r.PathValue("id")
+	// `pair` est un segment littéral du même niveau que {id} : une requête
+	// sur /sensors/pair sans session atterrit ici. Répondre « ID capteur
+	// invalide » enverrait le client sur une fausse piste.
+	if idStr == "pair" {
+		writeErr(w, http.StatusNotFound, "session d'appairage manquante (/sensors/pair/{session})")
+		return
+	}
 	id, err := strconv.Atoi(idStr)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "ID capteur invalide")
@@ -668,8 +748,15 @@ func (s *Server) handleDeleteSensor(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-func (s *Server) handleRenameSensor(w http.ResponseWriter, r *http.Request) {
+// handleUpdateSensor met à jour les métadonnées d'un capteur : libellé et
+// flags de comportement alarme. Le nom d'origine (handleRenameSensor) ne
+// décrivait plus que le premier des six champs acceptés.
+func (s *Server) handleUpdateSensor(w http.ResponseWriter, r *http.Request) {
 	idStr := r.PathValue("id")
+	if idStr == "pair" {
+		writeErr(w, http.StatusNotFound, "route inconnue (/sensors/pair n'accepte que POST et DELETE)")
+		return
+	}
 	id, err := strconv.Atoi(idStr)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "ID capteur invalide")
@@ -788,12 +875,7 @@ func (s *Server) handleOpenStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build SRT URL for the client. Use the request host for the IP.
-	host := r.Host
-	if i := strings.Index(host, ":"); i >= 0 {
-		host = host[:i]
-	}
-	srtURL := fmt.Sprintf("srt://%s:%d?passphrase=%s&mode=caller", host, info.Port, info.Passphrase)
+	srtURL := buildSRTURL(r.Host, info.Port, info.Passphrase)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"srt_url":    srtURL,
@@ -802,13 +884,18 @@ func (s *Server) handleOpenStream(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// maskedSecret remplace tout secret renvoyé en lecture. Le handler d'écriture
+// le reconnaît et laisse alors la valeur stockée intacte, ce qui permet à
+// l'UI de renvoyer la config telle qu'elle l'a reçue sans effacer le mot de
+// passe.
+const maskedSecret = "********"
+
 func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	cfg := s.store.Get()
 	masked := cfg.MQTT
 	if masked.Password != "" {
-		masked.Password = "********"
+		masked.Password = maskedSecret
 	}
-	alarmCommand, alarmState := cfg.AlarmoTopics()
 	// camera_mode lets the UI know whether to expose openqiarad-only
 	// timings (charmux mode) or hide them because fbxhome owns them.
 	cameraMode := "fbxhome"
@@ -817,24 +904,100 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"mqtt":        masked,
-		"homekit":     cfg.HomeKit,
+		"homekit":     maskHomeKit(cfg.HomeKit),
 		"admin":       map[string]any{"password_set": cfg.Admin.AuthEnabled()},
 		"web":         map[string]any{"enabled": cfg.WebEnabled()},
 		"camera_mode": cameraMode,
-		"alarm": map[string]any{
-			"mode":                  cfg.AlarmMode(),
-			"alarmo_command_topic":  alarmCommand,
-			"alarmo_state_topic":    alarmState,
-			"siren_sounds":          cfg.SirenSoundsMode(),
-			"arming_delay_seconds":  int(cfg.ArmingDelay().Seconds()),
-			"pending_delay_seconds": int(cfg.PendingDelay().Seconds()),
-			"wail_duration_seconds": int(cfg.WailDuration().Seconds()),
-		},
+		"alarm":       s.alarmConfigPayload(),
 	})
 }
 
 // handleGetFbxhomeAlarm reads the persisted HlAlarm timings from the
 // rotated fbxhome.xml.N files (endpoints_read is ACL-blocked).
+// handleNotFoundV1 répond aux routes /api/v1/* qui n'existent pas dans cette
+// version : faute de frappe, méthode non supportée, ou route pas encore
+// déployée. 404 et non 410 — la ressource n'a pas disparu, elle n'a jamais
+// existé ici, et un client a le droit de réessayer après une mise à jour.
+func (s *Server) handleNotFoundV1(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusNotFound, map[string]any{
+		"error":  "route inconnue",
+		"path":   r.URL.Path,
+		"method": r.Method,
+		"see":    "docs/api.md",
+	})
+}
+
+// handleGoneUnversioned répond aux routes /api/* non versionnées, retirées au
+// profit de /api/v1. 410 plutôt que de laisser le FileServer servir
+// l'index.html en 200, ce qu'un vieux client parserait comme une réponse
+// valide.
+func (s *Server) handleGoneUnversioned(w http.ResponseWriter, r *http.Request) {
+	// Pas de chemin de remplacement calculé : il serait faux pour les routes
+	// déplacées (/api/alarm → /api/v1/commands/alarm, /api/codes →
+	// /api/v1/kpd/code). La table de correspondance est dans docs/api.md.
+	writeJSON(w, http.StatusGone, map[string]any{
+		"error":   "API non versionnée supprimée, voir /api/v1",
+		"path":    r.URL.Path,
+		"see":     "docs/api.md",
+		"version": "v1",
+	})
+}
+
+func (s *Server) handleGetMQTT(w http.ResponseWriter, r *http.Request) {
+	masked := s.store.Get().MQTT
+	if masked.Password != "" {
+		masked.Password = maskedSecret
+	}
+	writeJSON(w, http.StatusOK, masked)
+}
+
+func (s *Server) handleGetHomeKit(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, maskHomeKit(s.store.Get().HomeKit))
+}
+
+// maskHomeKit masque le setup code avant toute lecture. C'est un secret
+// d'appairage au même titre que le mot de passe MQTT : qui le lit peut
+// rattacher un contrôleur HomeKit, donc piloter l'alarme. Renvoyer la
+// valeur masquée telle quelle en écriture laisse le PIN stocké intact.
+func maskHomeKit(hk config.HomeKitConfig) config.HomeKitConfig {
+	if hk.Pin != "" {
+		hk.Pin = maskedSecret
+	}
+	return hk
+}
+
+// handleGetAdmin n'expose jamais le hash : seulement si l'auth est active.
+func (s *Server) handleGetAdmin(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"password_set": s.store.Get().Admin.AuthEnabled(),
+	})
+}
+
+func (s *Server) handleGetWeb(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"enabled": s.store.Get().WebEnabled()})
+}
+
+func (s *Server) handleGetAlarmConfig(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.alarmConfigPayload())
+}
+
+// alarmConfigPayload construit la vue publique de la config alarme. Partagée
+// entre GET /api/v1/config (agrégat) et GET /api/v1/config/alarm pour que les
+// deux ne puissent pas diverger.
+func (s *Server) alarmConfigPayload() map[string]any {
+	cfg := s.store.Get()
+	alarmCommand, alarmState := cfg.AlarmoTopics()
+	return map[string]any{
+		"mode":                  cfg.AlarmMode(),
+		"alarmo_command_topic":  alarmCommand,
+		"alarmo_state_topic":    alarmState,
+		"siren_sounds":          cfg.SirenSoundsMode(),
+		"arming_delay_seconds":  int(cfg.ArmingDelay().Seconds()),
+		"pending_delay_seconds": int(cfg.PendingDelay().Seconds()),
+		"wail_duration_seconds": int(cfg.WailDuration().Seconds()),
+	}
+}
+
 func (s *Server) handleGetFbxhomeAlarm(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.cam.(*camera.FbxhomeClient); !ok {
 		writeErr(w, http.StatusBadRequest, "indisponible en mode charmux")
@@ -990,6 +1153,14 @@ func (s *Server) handleUpdateAdmin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "champ 'password' requis (vide pour désactiver l'auth)")
 		return
 	}
+	// Chaîne vide = désactivation explicite de l'auth, cas légitime. Mais un
+	// mot de passe trop court donnerait une fausse impression de protection
+	// sur une UI qui pilote une alarme.
+	if *body.Password != "" && len(*body.Password) < minAdminPasswordLen {
+		writeErr(w, http.StatusBadRequest,
+			fmt.Sprintf("mot de passe trop court (%d caractères minimum)", minAdminPasswordLen))
+		return
+	}
 
 	hash, err := config.HashAdminPassword(*body.Password)
 	if err != nil {
@@ -1020,6 +1191,10 @@ func (s *Server) handleUpdateMQTT(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "JSON invalide")
 		return
 	}
+	if err := validateBrokerURL(body.Broker); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	err := s.store.Update(func(cfg *config.Config) {
 		if body.Broker != "" {
@@ -1028,7 +1203,7 @@ func (s *Server) handleUpdateMQTT(w http.ResponseWriter, r *http.Request) {
 		if body.Username != "" {
 			cfg.MQTT.Username = body.Username
 		}
-		if body.Password != "" && body.Password != "********" {
+		if body.Password != "" && body.Password != maskedSecret {
 			cfg.MQTT.Password = body.Password
 		}
 		if body.TopicPrefix != "" {
@@ -1050,10 +1225,16 @@ func (s *Server) handleUpdateHomeKit(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "JSON invalide")
 		return
 	}
+	if err := validateHomeKitPin(body.Pin); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	err := s.store.Update(func(cfg *config.Config) {
 		cfg.HomeKit.Enabled = body.Enabled
-		if body.Pin != "" {
+		// La valeur masquée renvoyée en lecture ne doit jamais devenir le
+		// PIN réel : l'UI relit la config puis la réécrit telle quelle.
+		if body.Pin != "" && body.Pin != maskedSecret {
 			cfg.HomeKit.Pin = body.Pin
 		}
 		if body.Name != "" {
@@ -1067,6 +1248,100 @@ func (s *Server) handleUpdateHomeKit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// buildSRTURL construit l'URL SRT annoncée au client à partir du Host de la
+// requête. Deux pièges :
+//
+//   - un Index(":") pour retirer le port tronque `[::1]:80` à `[` ;
+//     SplitHostPort rend bien `::1`. Un Host sans port n'est pas une erreur,
+//     on le garde tel quel.
+//   - une adresse IPv6 doit être re-bracketée, sinon `srt://::1:9000` est
+//     ambigu (impossible de distinguer l'adresse du port).
+func buildSRTURL(reqHost string, port int, passphrase string) string {
+	host := reqHost
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	if strings.Contains(host, ":") {
+		host = "[" + host + "]"
+	}
+	return fmt.Sprintf("srt://%s:%d?passphrase=%s&mode=caller", host, port, passphrase)
+}
+
+// --- Validation helpers ---
+
+// minAdminPasswordLen est la longueur minimale du mot de passe admin quand
+// l'auth est activée. Volontairement bas : l'UI n'est pas exposée à
+// Internet, et un seuil trop haut pousserait à désactiver l'auth.
+const minAdminPasswordLen = 8
+
+// validateBrokerURL vérifie qu'un broker MQTT est d'une forme exploitable.
+// Vide = champ non modifié (les handlers config ignorent les chaînes vides),
+// donc accepté ici. On n'impose pas de schéma (paho accepte tcp://, ssl://,
+// ws://, wss:// et host:port nu) mais on rejette ce qui ne pourra jamais
+// se connecter : espaces internes, absence d'hôte.
+func validateBrokerURL(broker string) error {
+	if broker == "" {
+		return nil
+	}
+	if strings.ContainsAny(broker, " \t\r\n") {
+		return fmt.Errorf("broker invalide : espaces non autorisés")
+	}
+	hostPort := broker
+	if i := strings.Index(hostPort, "://"); i >= 0 {
+		scheme := hostPort[:i]
+		switch scheme {
+		case "tcp", "ssl", "tls", "mqtt", "mqtts", "ws", "wss":
+		default:
+			return fmt.Errorf("schéma broker invalide : %q (tcp, ssl, mqtt, ws, wss)", scheme)
+		}
+		hostPort = hostPort[i+3:]
+	}
+	if hostPort == "" {
+		return fmt.Errorf("broker invalide : hôte manquant")
+	}
+	// Port explicite → doit être numérique et dans les bornes. SplitHostPort
+	// gère IPv6 entre crochets ; une erreur signifie "pas de port", ce qui
+	// est valide (paho applique 1883 par défaut).
+	if host, port, err := net.SplitHostPort(hostPort); err == nil {
+		if host == "" {
+			return fmt.Errorf("broker invalide : hôte manquant")
+		}
+		n, perr := strconv.Atoi(port)
+		if perr != nil || n < 1 || n > 65535 {
+			return fmt.Errorf("port broker invalide : %q", port)
+		}
+	}
+	return nil
+}
+
+// validateHomeKitPin vérifie le setup code HomeKit : exactement 8 chiffres.
+// Vide = inchangé (le handler ne réécrit pas un Pin vide) et le défaut
+// 00102003 est appliqué plus bas par le publisher. Apple interdit quelques
+// codes triviaux — les accepter produirait un accessoire qu'iOS refuse
+// d'appairer, donc autant le dire ici.
+func validateHomeKitPin(pin string) error {
+	// Vide = inchangé ; masqué = l'UI a relu puis réécrit la config sans
+	// toucher au PIN. Les deux laissent la valeur stockée intacte.
+	if pin == "" || pin == maskedSecret {
+		return nil
+	}
+	if len(pin) != 8 {
+		return fmt.Errorf("pin HomeKit invalide : 8 chiffres attendus")
+	}
+	for _, c := range pin {
+		if c < '0' || c > '9' {
+			return fmt.Errorf("pin HomeKit invalide : chiffres uniquement")
+		}
+	}
+	switch pin {
+	case "00000000", "11111111", "22222222", "33333333", "44444444",
+		"55555555", "66666666", "77777777", "88888888", "99999999",
+		"12345678", "87654321":
+		return fmt.Errorf("pin HomeKit interdit par Apple (code trivial)")
+	}
+	return nil
 }
 
 // --- Alarm & KPD codes ---
@@ -1171,34 +1446,70 @@ func (s *Server) handleSetAlarm(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "state": state})
 }
 
-// findKPDSensor returns the first KPD sensor entry from config.
-func (s *Server) findKPDSensor() (int, *config.SensorEntry) {
+// errNoKPD / errMultipleKPD qualifient les deux échecs de résolution du
+// clavier. Le second existe parce que l'ancien findKPDSensor prenait
+// silencieusement le premier KPD du slice : avec deux claviers appairés,
+// l'écriture du code partait vers l'un ou l'autre selon l'ordre de
+// persistance, sans que l'utilisateur puisse le savoir.
+var (
+	errNoKPD       = fmt.Errorf("aucun clavier (KPD) appairé")
+	errMultipleKPD = fmt.Errorf("plusieurs claviers appairés, ciblage requis")
+)
+
+// requireSingleKPD résout LE clavier de l'installation. Le modèle assume un
+// KPD unique (contrainte produit : un seul code PIN supporté côté firmware).
+// S'il y en a plusieurs, on refuse explicitement au lieu de choisir.
+func (s *Server) requireSingleKPD() (int, *config.SensorEntry, error) {
 	cfg := s.store.Get()
+	idx := -1
 	for i, se := range cfg.Sensors {
-		if se.Type == "KPD" {
-			return i, &cfg.Sensors[i]
+		if se.Type != "KPD" {
+			continue
 		}
+		if idx >= 0 {
+			return -1, nil, errMultipleKPD
+		}
+		idx = i
 	}
-	return -1, nil
+	if idx < 0 {
+		return -1, nil, errNoKPD
+	}
+	return idx, &cfg.Sensors[idx], nil
 }
 
-func (s *Server) handleGetCodes(w http.ResponseWriter, r *http.Request) {
-	_, kpd := s.findKPDSensor()
-	if kpd == nil {
-		writeJSON(w, http.StatusOK, map[string]any{"code": nil})
+// writeKPDErr traduit une erreur de résolution clavier en réponse HTTP :
+// 404 quand il n'y en a aucun, 409 quand le ciblage est ambigu.
+func writeKPDErr(w http.ResponseWriter, err error) {
+	if err == errMultipleKPD {
+		writeErr(w, http.StatusConflict, err.Error())
 		return
 	}
-	var code any
-	if kpd.KPDCode != "" {
-		code = map[string]any{
-			"password": kpd.KPDCode,
-			"label":    kpd.KPDCodeLabel,
-		}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"code": code})
+	writeErr(w, http.StatusNotFound, err.Error())
 }
 
-func (s *Server) handleAddCode(w http.ResponseWriter, r *http.Request) {
+// handleGetKPDCode lit le code PIN du clavier. 404 si aucun clavier n'est
+// appairé — l'absence de clavier est un état différent d'un clavier sans
+// code, que l'ancienne version confondait en renvoyant {"code":null}.
+func (s *Server) handleGetKPDCode(w http.ResponseWriter, r *http.Request) {
+	_, kpd, err := s.requireSingleKPD()
+	if err != nil {
+		writeKPDErr(w, err)
+		return
+	}
+	if kpd.KPDCode == "" {
+		writeJSON(w, http.StatusOK, map[string]any{"sensor_id": kpd.ID, "code": nil})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"sensor_id": kpd.ID,
+		"code": map[string]any{
+			"password": kpd.KPDCode,
+			"label":    kpd.KPDCodeLabel,
+		},
+	})
+}
+
+func (s *Server) handleSetKPDCode(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Password string `json:"password"`
 		Label    string `json:"label"`
@@ -1207,23 +1518,23 @@ func (s *Server) handleAddCode(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "JSON invalide")
 		return
 	}
+	if len(body.Password) != 4 {
+		writeErr(w, http.StatusBadRequest, "le code doit être composé de 4 chiffres")
+		return
+	}
 	for _, c := range body.Password {
 		if c < '0' || c > '9' {
 			writeErr(w, http.StatusBadRequest, "le code doit être composé de 4 chiffres")
 			return
 		}
 	}
-	if len(body.Password) != 4 {
-		writeErr(w, http.StatusBadRequest, "le code doit être composé de 4 chiffres")
-		return
-	}
 	if body.Label == "" {
 		body.Label = "Code"
 	}
 
-	idx, kpd := s.findKPDSensor()
-	if kpd == nil {
-		writeErr(w, http.StatusNotFound, "aucun clavier (KPD) appairé")
+	idx, kpd, err := s.requireSingleKPD()
+	if err != nil {
+		writeKPDErr(w, err)
 		return
 	}
 
@@ -1312,10 +1623,10 @@ func (s *Server) scheduleKPDCodeWrite(fc *camera.FbxhomeClient, kpdID int, passw
 	}()
 }
 
-func (s *Server) handleDeleteCode(w http.ResponseWriter, r *http.Request) {
-	idx, kpd := s.findKPDSensor()
-	if kpd == nil {
-		writeErr(w, http.StatusNotFound, "aucun clavier (KPD) appairé")
+func (s *Server) handleDeleteKPDCode(w http.ResponseWriter, r *http.Request) {
+	idx, kpd, err := s.requireSingleKPD()
+	if err != nil {
+		writeKPDErr(w, err)
 		return
 	}
 
@@ -1390,9 +1701,13 @@ func (s *Server) handleHLSStream(w http.ResponseWriter, r *http.Request) {
 	// Whitelist d'extensions + interdiction des composants `..` / chemin
 	// absolu. Limite l'exposition même si Go nettoie déjà côté ServeFile :
 	// on n'autorise QUE les artefacts HLS produits par hlcamd/hls.
+	// Note : un `..` littéral n'arrive jamais jusqu'ici — ServeMux nettoie le
+	// chemin et redirige (307) avant le handler. Ce test reste comme
+	// deuxième barrière si la requête est construite autrement (appel
+	// direct du handler en test, futur routeur sans normalisation).
 	reqPath := r.URL.Path[len("/stream/"):]
 	if reqPath == "" || strings.Contains(reqPath, "..") || strings.HasPrefix(reqPath, "/") {
-		http.Error(w, "not found", http.StatusNotFound)
+		writeErr(w, http.StatusNotFound, "segment HLS introuvable")
 		return
 	}
 	switch {
@@ -1402,7 +1717,7 @@ func (s *Server) handleHLSStream(w http.ResponseWriter, r *http.Request) {
 		// hlcamd/hls écrit du MPEG-TS dans les .m4s malgré l'extension.
 		w.Header().Set("Content-Type", "video/mp2t")
 	default:
-		http.Error(w, "not found", http.StatusNotFound)
+		writeErr(w, http.StatusNotFound, "extension non servie (.m3u8, .m4s, .ts uniquement)")
 		return
 	}
 

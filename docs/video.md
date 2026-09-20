@@ -19,11 +19,11 @@ Le flux HLS n'est pas actif par défaut. Il faut l'activer :
 fbxbusctl call hlcamd resume_streams
 
 # Via l'API openqiarad
-POST http://<camera>:8080/api/stream/start
+POST http://<camera>:8080/api/v1/commands/stream/start
 # Retourne: {"ok": true, "hls": "/stream/HLS_TEST.m3u8", "720": "/stream/720p/HLS_TEST.m3u8"}
 ```
 
-L'endpoint `/api/stream/start` ouvre aussi le shutter automatiquement.
+L'endpoint `/api/v1/commands/stream/start` ouvre aussi le shutter automatiquement.
 
 ## URLs HLS
 
@@ -86,7 +86,7 @@ ffmpeg.
 Le cache objectif doit être ouvert pour voir l'image :
 
 ```
-POST http://<camera>:8080/api/shutter
+POST http://<camera>:8080/api/v1/commands/shutter
 {"open": true}   # ouvrir
 {"open": false}  # fermer
 ```

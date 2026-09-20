@@ -353,6 +353,9 @@ a { color: var(--primary); }
 
 <script>
 const API = '';
+// Préfixe versionné de l'API. Les routes non versionnées ont été retirées
+// côté serveur (410 Gone) — tout passe par /api/v1.
+const V1 = API + '/api/v1';
 
 // Escape HTML special chars before injection in innerHTML. À utiliser pour
 // TOUT contenu venant du serveur (labels capteurs, codes, messages d'erreur)
@@ -401,7 +404,7 @@ function formatUptime(seconds) {
 
 async function fetchStatus() {
   try {
-    const r = await fetch(API + '/api/status');
+    const r = await fetch(V1 + '/status');
     const d = await r.json();
     applyStatus(d);
   } catch (e) {
@@ -438,7 +441,7 @@ function sensorStateClass(sensor) {
 
 async function fetchSensors() {
   try {
-    const r = await fetch(API + '/api/sensors');
+    const r = await fetch(V1 + '/sensors');
     const sensors = await r.json();
     renderSensors(sensors);
   } catch (e) {
@@ -451,7 +454,7 @@ async function renameSensor(id, current) {
   const label = prompt('Nouveau nom du capteur :', current);
   if (!label || label.trim() === '') return;
   try {
-    const r = await fetch(API + '/api/sensors/' + id, {
+    const r = await fetch(V1 + '/sensors/' + id, {
       method: 'PUT',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({label: label.trim()})
@@ -467,7 +470,7 @@ async function renameSensor(id, current) {
 async function deleteSensor(id) {
   if (!confirm('Supprimer ce capteur ?')) return;
   try {
-    const r = await fetch(API + '/api/sensors/' + id, {method: 'DELETE'});
+    const r = await fetch(V1 + '/sensors/' + id, {method: 'DELETE'});
     const d = await r.json();
     if (d.error) throw new Error(d.error);
     fetchSensors();
@@ -479,7 +482,7 @@ async function deleteSensor(id) {
 async function testSiren() {
   if (!confirm('Tester la sirène ?')) return;
   try {
-    const r = await fetch(API + '/api/siren/test', {method: 'POST'});
+    const r = await fetch(V1 + '/commands/siren/test', {method: 'POST'});
     const d = await r.json();
     if (d.error) throw new Error(d.error);
   } catch (e) {
@@ -505,7 +508,7 @@ document.getElementById('pair-start').addEventListener('click', async () => {
   try {
     const body = {type};
     if (fingerprint) body.fingerprint = fingerprint;
-    const r = await fetch(API + '/api/sensors/pair', {
+    const r = await fetch(V1 + '/sensors/pair', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(body)
@@ -526,7 +529,7 @@ document.getElementById('pair-start').addEventListener('click', async () => {
 async function pollPairing() {
   const msg = document.getElementById('pair-msg');
   try {
-    const r = await fetch(API + '/api/sensors/pair?session=' + pairingSession);
+    const r = await fetch(V1 + '/sensors/pair/' + pairingSession);
     const d = await r.json();
     if (d.error) throw new Error(d.error);
     if (d.done) {
@@ -553,13 +556,19 @@ document.getElementById('pair-cancel').addEventListener('click', async () => {
   if (pairingTimer) clearInterval(pairingTimer);
   pairingTimer = null;
   const msg = document.getElementById('pair-msg');
-  try {
-    await fetch(API + '/api/sensors/pair?session=' + pairingSession, {method: 'DELETE'});
-    msg.className = 'msg info';
-    msg.textContent = 'Appairage annulé.';
-  } catch (e) {
-    msg.className = 'msg error';
-    msg.textContent = 'Erreur annulation: ' + e.message;
+  // pairingSession repasse à null dès qu'un appairage aboutit ou échoue.
+  // Sans cette garde on enverrait DELETE /sensors/pair/null, qui répond 400
+  // et afficherait « Erreur annulation » alors qu'il n'y a plus rien à
+  // annuler.
+  if (pairingSession !== null && pairingSession !== undefined) {
+    try {
+      await fetch(V1 + '/sensors/pair/' + pairingSession, {method: 'DELETE'});
+      msg.className = 'msg info';
+      msg.textContent = 'Appairage annulé.';
+    } catch (e) {
+      msg.className = 'msg error';
+      msg.textContent = 'Erreur annulation: ' + e.message;
+    }
   }
   pairingSession = null;
   document.getElementById('pair-start').style.display = 'inline-block';
@@ -570,7 +579,7 @@ async function setShutter(open) {
   const msg = document.getElementById('shutter-msg');
   msg.textContent = '';
   try {
-    const r = await fetch(API + '/api/shutter', {
+    const r = await fetch(V1 + '/commands/shutter', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({open})
@@ -593,7 +602,7 @@ document.getElementById('stream-open').addEventListener('click', async () => {
   msg.textContent = 'Activation du flux...';
   btn.disabled = true;
   try {
-    const r = await fetch(API + '/api/stream/start', {method: 'POST'});
+    const r = await fetch(V1 + '/commands/stream/start', {method: 'POST'});
     const d = await r.json();
     if (d.error) throw new Error(d.error);
 
@@ -638,7 +647,7 @@ const alarmColors = {
 
 async function fetchAlarm() {
   try {
-    const r = await fetch(API + '/api/alarm');
+    const r = await fetch(V1 + '/alarm');
     const d = await r.json();
     applyAlarmSnapshot(d);
   } catch (e) {
@@ -649,7 +658,7 @@ async function fetchAlarm() {
 
 async function setNightAllowed(id, allowed) {
   try {
-    const r = await fetch(API + '/api/sensors/' + id, {
+    const r = await fetch(V1 + '/sensors/' + id, {
       method: 'PUT',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({night_allowed: allowed})
@@ -664,7 +673,7 @@ async function setNightAllowed(id, allowed) {
 
 async function setSensorFlag(id, key, val) {
   try {
-    const r = await fetch(API + '/api/sensors/' + id, {
+    const r = await fetch(V1 + '/sensors/' + id, {
       method: 'PUT',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({[key]: val})
@@ -681,7 +690,7 @@ async function setAlarm(action) {
   const msg = document.getElementById('alarm-msg');
   msg.textContent = '';
   try {
-    const r = await fetch(API + '/api/alarm', {
+    const r = await fetch(V1 + '/commands/alarm', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({action})
@@ -699,10 +708,15 @@ async function setAlarm(action) {
 async function fetchCodes() {
   const list = document.getElementById('codes-list');
   try {
-    const r = await fetch(API + '/api/codes');
+    const r = await fetch(V1 + '/kpd/code');
     const d = await r.json();
     if (d.error) {
-      list.innerHTML = '<div class="msg info">' + escapeHTML(d.error) + '</div>';
+      // 404 = aucun clavier appairé (état normal, pas une panne).
+      // 409 = plusieurs claviers : le serveur refuse de choisir.
+      const cls = r.status === 409 ? 'error' : 'info';
+      list.innerHTML = '<div class="msg ' + cls + '">' + escapeHTML(d.error) + '</div>';
+      document.getElementById('code-pwd').value = '';
+      document.getElementById('code-label').value = '';
       return;
     }
     if (!d.code) {
@@ -739,8 +753,8 @@ async function addCode() {
   }
 
   try {
-    const r = await fetch(API + '/api/codes', {
-      method: 'POST',
+    const r = await fetch(V1 + '/kpd/code', {
+      method: 'PUT',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({password: pwd, label: label})
     });
@@ -760,7 +774,7 @@ async function deleteCode() {
   const msg = document.getElementById('codes-msg');
   msg.textContent = '';
   try {
-    const r = await fetch(API + '/api/codes', {method: 'DELETE'});
+    const r = await fetch(V1 + '/kpd/code', {method: 'DELETE'});
     const d = await r.json();
     if (d.error) throw new Error(d.error);
     msg.className = 'msg success';
@@ -775,7 +789,7 @@ async function deleteCode() {
 // --- Config ---
 async function loadConfig() {
   try {
-    const r = await fetch(API + '/api/config');
+    const r = await fetch(V1 + '/config');
     const d = await r.json();
     document.getElementById('cfg-broker').value = d.mqtt.broker || '';
     document.getElementById('cfg-username').value = d.mqtt.username || '';
@@ -836,7 +850,7 @@ async function loadConfig() {
     // Load fbxhome timings on-demand (separate endpoint reading the XML).
     if (camMode === 'fbxhome') {
       try {
-        const fr = await fetch(API + '/api/config/fbxhome_alarm');
+        const fr = await fetch(V1 + '/config/fbxhome_alarm');
         if (fr.ok) {
           const ft = await fr.json();
           document.getElementById('cfg-fbx-armed').value = ft.timeout_before_armed ?? 30;
@@ -907,13 +921,13 @@ document.getElementById('cfg-save-all').addEventListener('click', async () => {
   };
   const mqttPwd = document.getElementById('cfg-password').value;
   if (mqttPwd) mqttBody.password = mqttPwd;
-  calls.push(fetch(API + '/api/config/mqtt', {
+  calls.push(fetch(V1 + '/config/mqtt', {
     method: 'PUT', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(mqttBody)
   }));
 
   // HomeKit
-  calls.push(fetch(API + '/api/config/homekit', {
+  calls.push(fetch(V1 + '/config/homekit', {
     method: 'PUT', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({
       enabled: document.getElementById('cfg-hk-enabled').value === 'true',
@@ -926,7 +940,7 @@ document.getElementById('cfg-save-all').addEventListener('click', async () => {
   }));
 
   // Alarme
-  calls.push(fetch(API + '/api/config/alarm', {
+  calls.push(fetch(V1 + '/config/alarm', {
     method: 'PUT', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({
       mode: document.getElementById('cfg-alarm-mode').value,
@@ -944,7 +958,7 @@ document.getElementById('cfg-save-all').addEventListener('click', async () => {
   const camMode = window.currentCameraMode || 'fbxhome';
   const alarmMode = window.currentAlarmMode || 'standalone';
   if (camMode === 'fbxhome' && alarmMode !== 'standalone') {
-    calls.push(fetch(API + '/api/config/fbxhome_alarm', {
+    calls.push(fetch(V1 + '/config/fbxhome_alarm', {
       method: 'PUT', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
         timeout_before_armed: parseInt(document.getElementById('cfg-fbx-armed').value, 10),
@@ -955,14 +969,14 @@ document.getElementById('cfg-save-all').addEventListener('click', async () => {
   }
 
   // Web
-  calls.push(fetch(API + '/api/config/web', {
+  calls.push(fetch(V1 + '/config/web', {
     method: 'PUT', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({enabled: webEnabled})
   }));
 
   // Admin (seulement si le champ est rempli)
   if (adminPwd !== undefined) {
-    calls.push(fetch(API + '/api/config/admin', {
+    calls.push(fetch(V1 + '/config/admin', {
       method: 'PUT', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({password: adminPwd})
     }));
@@ -1008,7 +1022,7 @@ loadConfig().then(fetchSensors);
 //
 // EventSource auto-reconnects on disconnect.
 function startEventStream() {
-  const es = new EventSource(API + '/api/events');
+  const es = new EventSource(V1 + '/events');
 
   es.addEventListener('alarm', (e) => {
     try {
@@ -1091,7 +1105,7 @@ function applyStatus(d) {
 // daemon SIGTERM lui-même), on affiche un message d'attente.
 async function checkForUpdate() {
   try {
-    const r = await fetch('/api/update/check');
+    const r = await fetch(V1 + '/update');
     if (!r.ok) return; // 503 = pas configuré, silencieux
     const d = await r.json();
     if (!d.update_needed) return;
@@ -1110,7 +1124,7 @@ async function rebootCamera() {
   btn.disabled = true;
   btn.textContent = 'Redémarrage...';
   try {
-    const r = await fetch(API + '/api/reboot', { method: 'POST' });
+    const r = await fetch(V1 + '/commands/reboot', { method: 'POST' });
     if (!r.ok) {
       alert('Échec : ' + (await r.text()));
       btn.disabled = false;
@@ -1137,7 +1151,7 @@ async function installUpdate() {
   progress.textContent = 'démarrage...';
 
   try {
-    const r = await fetch('/api/update/install', { method: 'POST' });
+    const r = await fetch(V1 + '/commands/update/install', { method: 'POST' });
     if (!r.ok) {
       progress.textContent = 'échec : ' + (await r.text());
       btn.disabled = false;
@@ -1147,7 +1161,7 @@ async function installUpdate() {
     // Poll le status toutes les 500ms jusqu'à StepDone ou StepFailed.
     const poll = async () => {
       try {
-        const sr = await fetch('/api/update/status');
+        const sr = await fetch(V1 + '/update/status');
         if (!sr.ok) {
           // Le daemon a probablement redémarré : on attend qu'il revienne.
           progress.textContent = 'redémarrage en cours...';

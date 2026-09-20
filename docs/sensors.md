@@ -66,7 +66,7 @@ curl -s -X POST "http://[::1]:10000/api/v1/home/pairing" \
 Utiliser l'API web ou directement `domus.PairSensor()` en Go :
 
 ```
-POST http://<camera>:8080/api/sensors/pair
+POST http://<camera>:8080/api/v1/sensors/pair
 {"type": "DWS"}  # ou PIR, SRN, KPD
 ```
 

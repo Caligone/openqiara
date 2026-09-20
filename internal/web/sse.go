@@ -10,19 +10,20 @@ import (
 
 // sseEvent is a single server-sent event broadcast to connected clients.
 type sseEvent struct {
-	Type string      `json:"type"` // "alarm", "sensors", "status"
-	Data any `json:"data"`
+	Type string `json:"type"` // "alarm", "sensors", "status"
+	Data any    `json:"data"`
 }
 
 // sseHub is the fan-out for server-sent events. Sources push events into it,
 // connected clients each receive their own copy via a buffered channel.
 //
 // Usage:
-//   hub := newSSEHub()
-//   hub.Publish(sseEvent{Type: "alarm", Data: snap})   // from engine callback
-//   // In HTTP handler:
-//   ch := hub.Subscribe(); defer hub.Unsubscribe(ch)
-//   for ev := range ch { write to ResponseWriter }
+//
+//	hub := newSSEHub()
+//	hub.Publish(sseEvent{Type: "alarm", Data: snap})   // from engine callback
+//	// In HTTP handler:
+//	ch := hub.Subscribe(); defer hub.Unsubscribe(ch)
+//	for ev := range ch { write to ResponseWriter }
 type sseHub struct {
 	mu      sync.RWMutex
 	clients map[chan sseEvent]struct{}
@@ -89,7 +90,7 @@ func (h *sseHub) Unsubscribe(ch chan sseEvent) {
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		writeErr(w, http.StatusInternalServerError, "streaming non supporté par ce transport")
 		return
 	}
 

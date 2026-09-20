@@ -40,8 +40,8 @@ JSON=$(cat <<EOF
 EOF
 )
 
-echo "→ POST /api/debug/siren/sequence"
+echo "→ POST /api/v1/commands/debug/siren/sequence"
 echo "   $JSON"
-curl -sf -u "$WEB_AUTH" -X POST "http://$CAM_HOST:8080/api/debug/siren/sequence" \
+curl -sf -u "$WEB_AUTH" -X POST "http://$CAM_HOST:8080/api/v1/commands/debug/siren/sequence" \
   -H "Content-Type: application/json" -d "$JSON"
 echo

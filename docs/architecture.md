@@ -216,28 +216,19 @@ Le `CommandHandler` reçoit les commandes entrantes (arm/disarm, siren on/off) d
 
 ## API REST
 
-| Méthode | Endpoint | Description |
-|---------|----------|-------------|
-| GET | /api/status | Uptime, statut MQTT, nombre de capteurs |
-| GET | /api/config | Config complète (lecture) |
-| PUT | /api/config/alarm | Modifier le mode alarme + délais + sons sirène |
-| PUT | /api/config/web | Modifier la config web |
-| GET | /api/sensors | Liste des capteurs avec état |
-| POST | /api/sensors/pair | Démarrer un appairage |
-| GET | /api/sensors/pair | Poller l'appairage |
-| DELETE | /api/sensors/pair | Annuler l'appairage |
-| PUT | /api/sensors/{id} | Renommer un capteur |
-| DELETE | /api/sensors/{id} | Supprimer un capteur |
-| GET | /api/alarm | État alarme courant |
-| POST | /api/alarm | Changer l'état alarme (`{"action":"arm_away\|arm_night\|disarm"}`) |
-| GET | /api/codes | Lister les codes KPD |
-| POST | /api/codes | Ajouter un code |
-| DELETE | /api/codes | Supprimer un code |
-| POST | /api/siren/test | Tester la sirène (son discret) |
-| POST | /api/siren/alarm_test | Tester le wail d'intrusion |
-| POST | /api/shutter | Ouvrir/fermer le cache |
-| POST | /api/stream/start | Activer le flux HLS |
-| GET | /stream/* | Servir les segments HLS |
-| GET | /api/events | Server-Sent Events (état alarme, capteurs temps réel) |
-| POST | /api/reboot | Redémarrer la caméra |
-| POST | /api/debug/pkt | Envoyer un paquet PKT brut |
+Servie par `internal/web` sur le port `-web` (`:80` par défaut), sous le
+préfixe `/api/v1`. Deux familles cohabitent :
+
+- **Ressources** — `/sensors`, `/config`, `/alarm`, `/kpd`, `/status`,
+  `/update`. Un état qu'on lit et qu'on écrit.
+- **Commandes** — `/commands/*` (reboot, sirène, volet, flux, OTA). Un effet
+  matériel déclenché : leur `200` signifie *accepté*, pas *effectué*.
+
+S'y ajoutent le flux SSE `/api/v1/events`, les segments HLS `/stream/*`, et
+les webhooks loopback `/events` + `/notifications` poussés par
+`hl_event_collectd` (hors versionnage, cf. `docs/api.md`).
+
+Les routes non versionnées ont été supprimées : elles répondent `410 Gone`.
+
+**Référence complète (payloads, codes d'erreur, contrat SSE) :
+[`docs/api.md`](api.md).**

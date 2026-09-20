@@ -66,7 +66,7 @@ func main() {
 	pollInterval := flag.Duration("poll", 5*time.Minute, "sensor poll interval (fbxhome backend, fallback only)")
 	webAddr := flag.String("web", ":80", "web UI listen address")
 	mode := flag.String("mode", "auto", "backend mode: fbxhome, charmux, or auto")
-	debugAPI := flag.Bool("debug", false, "enable /api/debug/* endpoints (PKT raw, siren raw — can brick the MCU)")
+	debugAPI := flag.Bool("debug", false, "enable /api/v1/commands/debug/* endpoints (PKT raw, siren raw — can brick the MCU)")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	// logPath="" → stdout (dev). Sinon, lumberjack écrit dans le fichier
 	// avec rotation (cap dur, indispensable sur /data ~20 MB).

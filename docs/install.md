@@ -111,7 +111,7 @@ reboot
 ssh -i ~/.ssh/id_ed25519 root@<IP>
 # Vérifier
 pidof openqiarad && echo "OK"
-curl -s http://127.0.0.1/api/status
+curl -s http://127.0.0.1/api/v1/status
 ```
 
 ### 6. Faire les backups (OBLIGATOIRE)
