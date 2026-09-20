@@ -200,7 +200,7 @@ func main() {
 				if s.Type == "KPD" {
 					continue
 				}
-				updated, err := cam.ReadSensor(ctx, s.ID, []string{"state", "temperature", "battery"})
+				updated, err := cam.ReadSensor(ctx, s.ID, s.Type, []string{"state", "temperature", "battery"})
 				if err != nil {
 					// Expected when a sensor hasn't emitted a PKT event yet —
 					// c.sensors is populated lazily. Debug to avoid noisy WARNs.
@@ -856,6 +856,27 @@ func webSrvSetAlarm(state string, pubs []publisher.Publisher, ctx context.Contex
 	}
 }
 
+// logSensorEvent only logs state fields that are meaningful for the sensor
+// type. In particular, the generic fbxhome `state` endpoint must not make a
+// PIR look like it has an open/closed cover state.
+func logSensorEvent(logger *slog.Logger, evt camera.SensorEvent, source string) {
+	attrs := []any{
+		"id", evt.SensorID,
+		"type", evt.Sensor.Type,
+	}
+	switch evt.Sensor.Type {
+	case "DWS":
+		attrs = append(attrs, "open", evt.Sensor.Open)
+	case "PIR":
+		attrs = append(attrs, "motion", evt.Sensor.Motion)
+	}
+	attrs = append(attrs, "battery", evt.Sensor.Battery)
+	if source != "" {
+		attrs = append(attrs, "src", source)
+	}
+	logger.Info("sensor event", attrs...)
+}
+
 func forwardEvents(
 	ctx context.Context,
 	cam camera.Client,
@@ -873,14 +894,7 @@ func forwardEvents(
 
 	// Publie un event sensor à tous les consommateurs (MQTT, HomeKit, SSE, alarm).
 	publishSensor := func(evt camera.SensorEvent) {
-		logger.Info("sensor event",
-			"id", evt.SensorID,
-			"type", evt.Sensor.Type,
-			"open", evt.Sensor.Open,
-			"motion", evt.Sensor.Motion,
-			"battery", evt.Sensor.Battery,
-			"src", "tail-or-poll",
-		)
+		logSensorEvent(logger, evt, "tail-or-poll")
 		for _, p := range pubs {
 			if err := p.PublishSensorState(ctx, evt.Sensor); err != nil {
 				logger.Error("publish sensor failed", "error", err)
@@ -918,13 +932,7 @@ func forwardEvents(
 				// KPD physique → source locale, délai d'armement appliqué.
 				dispatchCmd(action, alarm.SourceLocal)
 			} else {
-				logger.Info("sensor event",
-					"id", evt.SensorID,
-					"type", evt.Sensor.Type,
-					"open", evt.Sensor.Open,
-					"motion", evt.Sensor.Motion,
-					"battery", evt.Sensor.Battery,
-				)
+				logSensorEvent(logger, evt, "")
 				// Publish to MQTT/HomeKit regardless of alarm mode — sensors are
 				// always exposed as binary_sensors so Alarmo (or any other
 				// consumer) can react to them.

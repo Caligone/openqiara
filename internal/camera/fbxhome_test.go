@@ -155,12 +155,15 @@ func TestReadSensor(t *testing.T) {
 	c := newTestClient(t, srv.URL)
 	_ = c.Connect(context.Background())
 
-	s, err := c.ReadSensor(context.Background(), 33, []string{"state", "temperature", "battery"})
+	s, err := c.ReadSensor(context.Background(), 33, "PIR", []string{"state", "temperature", "battery"})
 	if err != nil {
 		t.Fatalf("ReadSensor: %v", err)
 	}
-	if !s.Open {
-		t.Error("expected Open=true")
+	if s.Open {
+		t.Error("PIR state must not be interpreted as Open=true")
+	}
+	if !s.Motion {
+		t.Error("expected Motion=true")
 	}
 	if s.Battery != 90 {
 		t.Errorf("Battery = %d, want 90", s.Battery)
@@ -194,7 +197,7 @@ func TestReadSensor_ReauthOn401(t *testing.T) {
 	c := newTestClient(t, srv.URL)
 	_ = c.Connect(context.Background())
 
-	s, err := c.ReadSensor(context.Background(), 33, []string{"state"})
+	s, err := c.ReadSensor(context.Background(), 33, "DWS", []string{"state"})
 	if err != nil {
 		t.Fatalf("ReadSensor after reauth: %v", err)
 	}
@@ -233,7 +236,7 @@ func TestReadSensor_ReauthOn400Reason4(t *testing.T) {
 	c := newTestClient(t, srv.URL)
 	_ = c.Connect(context.Background())
 
-	s, err := c.ReadSensor(context.Background(), 33, []string{"state"})
+	s, err := c.ReadSensor(context.Background(), 33, "DWS", []string{"state"})
 	if err != nil {
 		t.Fatalf("ReadSensor after 400 reason=4: %v", err)
 	}
@@ -262,7 +265,7 @@ func TestReadSensor_NoReauthOn400OtherReason(t *testing.T) {
 	c := newTestClient(t, srv.URL)
 	_ = c.Connect(context.Background())
 
-	_, err := c.ReadSensor(context.Background(), 33, []string{"state"})
+	_, err := c.ReadSensor(context.Background(), 33, "DWS", []string{"state"})
 	if err == nil {
 		t.Fatal("expected error on 400 reason=7")
 	}

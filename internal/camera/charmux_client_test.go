@@ -357,7 +357,7 @@ func TestCharmux_Connect_NoMux(t *testing.T) {
 
 func TestCharmux_ReadSensor_NotFound(t *testing.T) {
 	c := NewCharmuxClient()
-	_, err := c.ReadSensor(context.Background(), 99, nil)
+	_, err := c.ReadSensor(context.Background(), 99, "DWS", nil)
 	if err == nil {
 		t.Fatal("expected error for unknown sensor")
 	}
@@ -367,7 +367,7 @@ func TestCharmux_ReadSensor_Found(t *testing.T) {
 	c := NewCharmuxClient()
 	c.sensors[2] = Sensor{ID: 2, Type: "DWS", Open: true}
 
-	s, err := c.ReadSensor(context.Background(), 2, []string{"state"})
+	s, err := c.ReadSensor(context.Background(), 2, "DWS", []string{"state"})
 	if err != nil {
 		t.Fatalf("ReadSensor: %v", err)
 	}

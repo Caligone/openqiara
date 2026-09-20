@@ -289,9 +289,9 @@ func (c *CharmuxClient) Sensors(ctx context.Context) ([]Sensor, error) {
 }
 
 // ReadSensor returns the last known state for a sensor from the internal map.
-// The endpoints parameter is accepted for interface compatibility but ignored —
+// The sensorType and endpoints parameters are accepted for interface compatibility but ignored —
 // charmux state is updated via PKT events, not on-demand reads.
-func (c *CharmuxClient) ReadSensor(_ context.Context, nodeID int, _ []string) (*Sensor, error) {
+func (c *CharmuxClient) ReadSensor(_ context.Context, nodeID int, _ string, _ []string) (*Sensor, error) {
 	c.mu.RLock()
 	s, ok := c.sensors[nodeID]
 	c.mu.RUnlock()

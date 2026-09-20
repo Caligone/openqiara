@@ -250,8 +250,10 @@ func shouldReauth(resp *http.Response) (reauth bool, consumed []byte) {
 	return false, nil
 }
 
-// ReadSensor reads endpoint values for a single sensor.
-func (c *FbxhomeClient) ReadSensor(ctx context.Context, nodeID int, endpoints []string) (*Sensor, error) {
+// ReadSensor reads endpoint values for a single sensor. sensorType is required
+// because fbxhome uses the same `state` endpoint for DWS open/closed state and
+// PIR motion; it is not a PIR cover/tamper state.
+func (c *FbxhomeClient) ReadSensor(ctx context.Context, nodeID int, sensorType string, endpoints []string) (*Sensor, error) {
 	body := endpointsReadRequest{
 		List: []endpointQuery{{NodeID: nodeID, Endpoints: endpoints}},
 	}
@@ -278,7 +280,7 @@ func (c *FbxhomeClient) ReadSensor(ctx context.Context, nodeID int, endpoints []
 		if err := c.authenticate(ctx); err != nil {
 			return nil, fmt.Errorf("re-auth after %d: %w", resp.StatusCode, err)
 		}
-		return c.ReadSensor(ctx, nodeID, endpoints)
+		return c.ReadSensor(ctx, nodeID, sensorType, endpoints)
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -295,7 +297,7 @@ func (c *FbxhomeClient) ReadSensor(ctx context.Context, nodeID int, endpoints []
 		return nil, fmt.Errorf("endpoints_read: empty response for node %d", nodeID)
 	}
 
-	s := endpointResultToSensor(nodeID, result.List[0])
+	s := endpointResultToSensor(nodeID, sensorType, result.List[0])
 	return &s, nil
 }
 
@@ -693,7 +695,7 @@ func (c *FbxhomeClient) pollOnce(ctx context.Context) {
 		if s.Type == "KPD" || s.Type == "SRN" {
 			eps = []string{"battery"}
 		}
-		updated, err := c.ReadSensor(ctx, s.ID, eps)
+		updated, err := c.ReadSensor(ctx, s.ID, s.Type, eps)
 		if err != nil {
 			c.logger.Error("poll read sensor failed", "node_id", s.ID, "error", err)
 			continue
@@ -776,14 +778,18 @@ func nodeToSensor(n domusNode) Sensor {
 	}
 }
 
-func endpointResultToSensor(nodeID int, er endpointResult) Sensor {
-	s := Sensor{ID: nodeID}
+func endpointResultToSensor(nodeID int, sensorType string, er endpointResult) Sensor {
+	s := Sensor{ID: nodeID, Type: sensorType}
 	for _, ep := range er.EPValues {
 		switch ep.EPName {
 		case "state":
 			if v, ok := ep.Value.(bool); ok {
-				s.Open = v
-				s.Motion = v
+				switch sensorType {
+				case "DWS":
+					s.Open = v
+				case "PIR":
+					s.Motion = v
+				}
 			}
 		case "temperature":
 			if m, ok := ep.Value.(map[string]interface{}); ok {

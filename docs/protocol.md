@@ -333,8 +333,10 @@ the opcode.
 
 **Notes:**
 
-- **`STATE` (opcode 1)** is the main event opcode for DWS (open/closed/tamper)
-  and PIR (motion/idle/tamper). The state byte takes values 0, 1, or 2.
+- **`STATE` (opcode 1)** is the main event opcode for DWS (open/closed) and
+  PIR (motion start/end). The vendor parser accepts state values 0, 1, or 2
+  and contains a `Pir tamper` message, but value 2 has not been observed in
+  PIR radio captures. It must not be exposed as a persistent cover state.
 - **`TEMPERATURE` (opcode 10)** is a raw byte. The conversion to °C is **not
   yet known** and is performed by fbxhome at HTTP-serialisation time, not at
   parse time. OpenQiara currently exposes the raw byte; a contribution to

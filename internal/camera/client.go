@@ -20,8 +20,8 @@ type Client interface {
 	// CachedSensors returns the in-memory sensor state without MCU I/O.
 	CachedSensors() []Sensor
 
-	// ReadSensor reads the current state of a sensor by node ID.
-	ReadSensor(ctx context.Context, nodeID int, endpoints []string) (*Sensor, error)
+	// ReadSensor reads the current state of a sensor by node ID and type.
+	ReadSensor(ctx context.Context, nodeID int, sensorType string, endpoints []string) (*Sensor, error)
 
 	// StartPairing initiates sensor pairing for the given type (DWS, PIR, SRN, KPD).
 	// fingerprint is the QR code hex (16 chars), required for fbxhome pairing.
