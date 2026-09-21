@@ -91,11 +91,24 @@ Format PKT reçu : `01 ADDR F0 xx ADDR ADDR FLAGS 00 01 55 [payload]`
 - Payload `00 01` = ouvert
 - Payload `40 00` = fermé
 
-⚠️ **Limitation après retrait/remise de pile** : le DWS entre en boucle
-de reinit (`f1 ff 01` / `f1 00 01`) qui requiert une autorisation cloud
-Qiara qui n'existe plus. Le RE 2026-04-22 a prouvé que fbxhome stock a
-le **même comportement** offline. **Contournement** : supprimer le DWS via
-l'UI et le ré-appairer (factory reset bouton 10s puis wizard d'appairage).
+#### Après un changement de pile
+
+**En mode `fbxhome` (le mode par défaut), il n'y a rien à faire.** Le
+capteur émet des trames de reinit (`f1 ff 01`) pendant un moment, puis
+`fbxhome` termine le dialogue tout seul et le DWS revient en ligne.
+Laisser faire quelques minutes avant de conclure à un problème.
+
+Une version antérieure de cette page annonçait ici une limitation
+définitive nécessitant un ré-appairage. C'était faux : le RE du
+2026-04-22 concluait à partir d'une capture trop courte, et l'erreur a
+été corrigée le 2026-05-14 après reproduction en conditions réelles.
+
+**En mode `charmux`**, c'est différent : la clé de session du capteur vit
+dans la NVM du MCU et le capteur a perdu sa moitié en perdant
+l'alimentation. Notre séquence de reinit ne sait pas la rétablir, donc le
+capteur reste bloqué en `f1 ff 01`. Il faut alors un factory reset
+(bouton 10 s) puis un ré-appairage. Détails dans
+[`re-findings.md`](re-findings.md) § 6.2.
 
 ### PIR — Events mouvement
 
@@ -157,3 +170,24 @@ curl -s -X POST "http://[::1]:10000/api/v1/home/delete" \
   -H "Content-Type: application/json" \
   -H "X-Hlcore-Session-Id: $SESSION"
 ```
+
+## Dépannage
+
+### Un capteur ne s'appaire pas : commencer par la pile
+
+Avant de conclure au capteur défectueux, **essayer une pile neuve d'une
+autre marque**. Une pile faible produit des symptômes trompeurs, observés
+et confirmés sur un clavier (2026-05-14) :
+
+- la LED s'allume normalement, les boutons répondent ;
+- mais **rien ne part en radio** — l'appairage expire sans que la caméra
+  ne voie jamais le capteur.
+
+Le module RF tire un courant bien plus élevé en émission (>100 mA en
+crête) que la LED et le MCU réunis. Une pile à 80 % de capacité alimente
+encore l'un sans pouvoir alimenter l'autre. Cinq heures de tentatives
+avaient été perdues sur ce cas avant le changement de pile, qui a fait
+réussir l'appairage en moins de 30 secondes.
+
+Le raisonnement vaut pour tous les capteurs sur pile, même s'il n'a été
+mesuré que sur le clavier.
