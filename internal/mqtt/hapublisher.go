@@ -14,10 +14,11 @@ import (
 )
 
 const (
-	qos           byte = 1
-	retained           = true
-	connectTimeout     = 10 * time.Second
-	publishTimeout     = 5 * time.Second
+	qos            byte = 1
+	retained            = true
+	notRetained         = false
+	connectTimeout      = 10 * time.Second
+	publishTimeout      = 5 * time.Second
 
 	keepAlive            = 30 * time.Second
 	reconnectInterval    = 10 * time.Second
@@ -376,11 +377,26 @@ func (p *HAPublisher) IsConnected() bool {
 	return p.client != nil && p.client.IsConnected()
 }
 
-// PublishRaw publishes a raw payload to a topic with retain.
+// PublishRaw publishes a raw payload with retain. Use it for discovery
+// configs and for state: those must survive a broker or Home Assistant
+// restart, since a subscriber that reconnects has no other way to learn
+// where things stand.
 func (p *HAPublisher) PublishRaw(ctx context.Context, topic string, payload []byte) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.publish(ctx, topic, payload, retained)
+}
+
+// PublishCommand publishes a one-shot command, never retained.
+//
+// A command is an action, not a state. The broker replays a retained
+// message to every subscriber that connects, so a retained ARM_AWAY makes
+// Alarmo re-arm itself from a stale value on each Home Assistant restart —
+// observed re-arming, and once triggering the siren.
+func (p *HAPublisher) PublishCommand(ctx context.Context, topic string, payload []byte) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.publish(ctx, topic, payload, notRetained)
 }
 
 // Close disconnects the MQTT client.

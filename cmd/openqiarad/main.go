@@ -608,7 +608,10 @@ func main() {
 				payload = "DISARM"
 			}
 			if mqttPub != nil {
-				if err := mqttPub.HAPublisher().PublishRaw(ctx, topic, []byte(payload)); err != nil {
+				// PublishCommand, not PublishRaw: a retained ARM_AWAY is
+				// replayed to Alarmo every time it reconnects, so it would
+				// re-arm from a stale command after each HA restart.
+				if err := mqttPub.HAPublisher().PublishCommand(ctx, topic, []byte(payload)); err != nil {
 					logger.Warn("alarmo command publish failed", "topic", topic, "error", err)
 				} else {
 					logger.Info("alarm command → alarmo", "topic", topic, "payload", payload, "source", source)
