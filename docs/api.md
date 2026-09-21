@@ -10,6 +10,17 @@ Toutes les réponses sont en JSON, y compris les erreurs :
 {"error": "le code doit être composé de 4 chiffres"}
 ```
 
+> **Spécification machine** — [`openapi.json`](openapi.json) (OpenAPI 3.1)
+> décrit les mêmes routes avec leurs schémas complets : de quoi générer un
+> client, alimenter Postman ou Bruno, ou produire une page de documentation :
+>
+> ```console
+> $ npx @redocly/cli@latest build-docs docs/openapi.json -o /tmp/api.html
+> ```
+>
+> Cette page-ci reste la lecture de départ : elle déroule les cas d'usage dans
+> l'ordre où on les rencontre, là où la spécification est organisée par route.
+
 ## Versionnage
 
 Tout est sous **`/api/v1`**. Deux réponses distinguent une route disparue

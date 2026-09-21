@@ -1,0 +1,3257 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "OpenQiara",
+    "version": "1.0.0",
+    "summary": "API locale de la caméra d'alarme Qiara, reprise après l'arrêt du cloud Free.",
+    "description": "API HTTP servie par `openqiarad` sur la caméra elle-même. Tout est local :\naucun appel ne sort du réseau.\n\n## Ressources et commandes\n\nDeux familles cohabitent sous `/api/v1`, et la distinction est sémantique.\n\nLes **ressources** (`/sensors`, `/config`, `/alarm`, `/kpd`, `/status`,\n`/update`) portent un état : `GET` est sûr, `PUT` est idempotent, et la\nréponse décrit l'état obtenu.\n\nLes **commandes** (`/commands/*`) déclenchent un effet matériel : reboot,\nsirène, volet, flux vidéo, mise à jour. Elles ne sont ni sûres ni\nidempotentes, et **leur `200` signifie accepté, pas effectué** :\n\n- `POST /commands/reboot` répond avant de redémarrer ;\n- `POST /commands/alarm` renvoie un état optimiste que Home Assistant\n  Alarmo corrige ensuite via MQTT ;\n- `PUT /kpd/code` persiste le code aussitôt mais diffère l'écriture radio\n  jusqu'à 30 s si le clavier vient d'être appairé.\n\nPour l'état réel après une commande, relire la ressource correspondante ou\ns'abonner au flux d'événements.\n\n## Versionnage\n\nUne route `/api/v1/…` absente répond `404` : elle n'existe pas dans cette\nversion, et réessayer après mise à jour a du sens. Les anciennes routes non\nversionnées répondent `410`, définitif.\n\n## Hors spécification\n\n`POST /events` et `POST /notifications` existent sur le daemon mais ne font\npas partie de ce contrat : ils reçoivent les push du collecteur vendor\n`hl_event_collectd` en loopback strict. Ne pas les appeler.\n",
+    "license": {
+      "name": "MIT",
+      "identifier": "MIT"
+    },
+    "contact": {
+      "name": "OpenQiara",
+      "url": "https://github.com/Caligone/openqiara"
+    }
+  },
+  "externalDocs": {
+    "description": "Documentation complète",
+    "url": "https://github.com/Caligone/openqiara/blob/master/docs/api.md"
+  },
+  "servers": [
+    {
+      "url": "http://{camera}",
+      "description": "Caméra sur le réseau local.",
+      "variables": {
+        "camera": {
+          "default": "openqiara.local",
+          "description": "Nom mDNS ou adresse IP de la caméra."
+        }
+      }
+    }
+  ],
+  "security": [
+    {},
+    {
+      "adminBasicAuth": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "Statut",
+      "description": "État de fonctionnement du daemon."
+    },
+    {
+      "name": "Capteurs",
+      "description": "Capteurs appairés et leur appairage."
+    },
+    {
+      "name": "Clavier",
+      "description": "Code PIN du clavier (KPD)."
+    },
+    {
+      "name": "Alarme",
+      "description": "État de l'alarme."
+    },
+    {
+      "name": "Configuration",
+      "description": "Réglages persistés dans /data/openqiara.json."
+    },
+    {
+      "name": "Mise à jour",
+      "description": "OTA depuis GitHub Releases."
+    },
+    {
+      "name": "Commandes",
+      "description": "Effets matériels. Un 200 vaut acceptation, pas exécution."
+    },
+    {
+      "name": "Événements",
+      "description": "Flux temps réel et segments vidéo."
+    }
+  ],
+  "paths": {
+    "/api/v1/status": {
+      "get": {
+        "tags": [
+          "Statut"
+        ],
+        "summary": "Lire l'état du daemon",
+        "operationId": "getStatus",
+        "description": "Ne sollicite pas le MCU : sûr à interroger fréquemment.",
+        "responses": {
+          "200": {
+            "description": "État courant.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Status"
+                },
+                "examples": {
+                  "running": {
+                    "summary": "Daemon en marche",
+                    "value": {
+                      "uptime": 2187,
+                      "mqtt_connected": true,
+                      "sensor_count": 4,
+                      "version": "v0.1.0-rc.11"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/sensors": {
+      "get": {
+        "tags": [
+          "Capteurs"
+        ],
+        "summary": "Lister les capteurs",
+        "operationId": "listSensors",
+        "description": "Renvoie les métadonnées, pas l'état instantané : interroger chaque capteur coûte environ trois secondes d'attente MCU. Pour l'état temps réel (ouverture, mouvement, batterie), s'abonner au flux d'événements.",
+        "responses": {
+          "200": {
+            "description": "Capteurs appairés.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SensorWithMeta"
+                  }
+                },
+                "examples": {
+                  "mixed": {
+                    "summary": "Une installation type",
+                    "value": [
+                      {
+                        "id": 14,
+                        "type": "KPD",
+                        "type_name": "Node.DomusNode.HLKpd",
+                        "item_id": "f5129f624dc648fa",
+                        "battery": 100,
+                        "temperature": 200,
+                        "reachable": true,
+                        "open": false,
+                        "motion": false,
+                        "kpd_state": "disarmed",
+                        "last_seen": 1758441600,
+                        "label": "Entrée",
+                        "night_allowed": false
+                      },
+                      {
+                        "id": 23,
+                        "type": "DWS",
+                        "type_name": "Node.DomusNode.HlDws",
+                        "item_id": "562e741c4f5bd5e6",
+                        "battery": 98,
+                        "temperature": 205,
+                        "reachable": true,
+                        "open": true,
+                        "motion": false,
+                        "last_seen": 1758441500,
+                        "label": "Porte d'entrée",
+                        "night_allowed": false,
+                        "day_alarm": true,
+                        "night_alarm": true
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "description": "Le MCU n'a pas répondu.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sensors/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "description": "Identifiant de nœud du capteur.",
+          "schema": {
+            "type": "integer"
+          },
+          "example": 23
+        }
+      ],
+      "put": {
+        "tags": [
+          "Capteurs"
+        ],
+        "summary": "Modifier un capteur",
+        "operationId": "updateSensor",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SensorUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Enregistré. En mode `fbxhome`, la propagation des drapeaux vers le firmware est au mieux-effort.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OK"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Identifiant invalide, JSON malformé, ou aucun champ fourni.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Chemin réservé à l'appairage.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Échec de la sauvegarde.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Capteurs"
+        ],
+        "summary": "Supprimer un capteur",
+        "operationId": "deleteSensor",
+        "description": "Retire le capteur du MCU, de la configuration et de la découverte MQTT. L'identifiant est mémorisé comme supprimé pour qu'il ne réapparaisse pas au redémarrage.",
+        "responses": {
+          "200": {
+            "description": "Effectué.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OK"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Identifiant invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Chemin réservé à l'appairage.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Le MCU a refusé la suppression.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sensors/pair": {
+      "post": {
+        "tags": [
+          "Capteurs"
+        ],
+        "summary": "Démarrer un appairage",
+        "operationId": "startPairing",
+        "description": "Ouvre une session d'appairage. Mettre ensuite le capteur en mode appairage et interroger la session jusqu'à ce qu'elle aboutisse.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PairingStart"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Session ouverte.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PairingSession"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "JSON malformé ou type de capteur manquant.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "description": "Le MCU a refusé de démarrer l'appairage.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sensors/pair/{session}": {
+      "parameters": [
+        {
+          "name": "session",
+          "in": "path",
+          "required": true,
+          "description": "Identifiant de session d'appairage.",
+          "schema": {
+            "type": "integer"
+          },
+          "example": 1
+        }
+      ],
+      "get": {
+        "tags": [
+          "Capteurs"
+        ],
+        "summary": "Suivre un appairage",
+        "operationId": "pollPairing",
+        "description": "Interroger environ une fois par seconde. Lorsque `done` passe à `true`, le capteur est enregistré et publié sur MQTT.",
+        "responses": {
+          "200": {
+            "description": "État de la session.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PairingStatus"
+                },
+                "examples": {
+                  "pending": {
+                    "summary": "Appairage en cours",
+                    "value": {
+                      "done": false
+                    }
+                  },
+                  "done": {
+                    "summary": "Capteur appairé",
+                    "value": {
+                      "done": true,
+                      "sensor": {
+                        "id": 23,
+                        "type": "DWS",
+                        "type_name": "Node.DomusNode.HlDws",
+                        "item_id": "562e741c4f5bd5e6",
+                        "battery": 100,
+                        "temperature": 200,
+                        "reachable": true,
+                        "open": false,
+                        "motion": false,
+                        "last_seen": 0
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Session invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "description": "Erreur pendant l'appairage.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Capteurs"
+        ],
+        "summary": "Annuler un appairage",
+        "operationId": "stopPairing",
+        "responses": {
+          "200": {
+            "description": "Effectué.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OK"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Session invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "description": "Le MCU a refusé l'annulation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/kpd/code": {
+      "get": {
+        "tags": [
+          "Clavier"
+        ],
+        "summary": "Lire le code du clavier",
+        "operationId": "getKPDCode",
+        "responses": {
+          "200": {
+            "description": "Code configuré, ou `null`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KPDCode"
+                },
+                "examples": {
+                  "configured": {
+                    "summary": "Code défini",
+                    "value": {
+                      "sensor_id": 14,
+                      "code": {
+                        "password": "4821",
+                        "label": "admin"
+                      }
+                    }
+                  },
+                  "empty": {
+                    "summary": "Clavier sans code",
+                    "value": {
+                      "sensor_id": 14,
+                      "code": null
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Aucun clavier appairé.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Plusieurs claviers appairés : l'API refuse d'en choisir un.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Clavier"
+        ],
+        "summary": "Définir le code du clavier",
+        "operationId": "setKPDCode",
+        "description": "Le code est persisté immédiatement. L'écriture radio vers le clavier est différée jusqu'à trente secondes si celui-ci vient d'être appairé : écrire pendant son cycle d'initialisation le désynchronise.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KPDCodeUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Effectué.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OK"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Le code doit comporter exactement quatre chiffres.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Aucun clavier appairé.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Plusieurs claviers appairés : l'API refuse d'en choisir un.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Échec de la sauvegarde.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Clavier"
+        ],
+        "summary": "Supprimer le code du clavier",
+        "operationId": "deleteKPDCode",
+        "responses": {
+          "200": {
+            "description": "Effectué.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OK"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Aucun clavier appairé.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Plusieurs claviers appairés : l'API refuse d'en choisir un.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Échec de la sauvegarde.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/alarm": {
+      "get": {
+        "tags": [
+          "Alarme"
+        ],
+        "summary": "Lire l'état de l'alarme",
+        "operationId": "getAlarm",
+        "description": "En mode `alarmo`, reflète le dernier état reçu de Home Assistant.",
+        "responses": {
+          "200": {
+            "description": "État courant.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlarmSnapshot"
+                },
+                "examples": {
+                  "disarmed": {
+                    "summary": "Alarme désarmée",
+                    "value": {
+                      "state": "disarmed"
+                    }
+                  },
+                  "arming": {
+                    "summary": "Délai de sortie en cours",
+                    "value": {
+                      "state": "arming",
+                      "previous_state": "disarmed",
+                      "timer_remaining": 42
+                    }
+                  },
+                  "triggered": {
+                    "summary": "Intrusion détectée",
+                    "value": {
+                      "state": "triggered",
+                      "armed_at": 1758441600,
+                      "triggered_by": 23,
+                      "previous_state": "pending"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/config": {
+      "get": {
+        "tags": [
+          "Configuration"
+        ],
+        "summary": "Lire toute la configuration",
+        "operationId": "getConfig",
+        "responses": {
+          "200": {
+            "description": "Configuration, secrets masqués.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Config"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/config/mqtt": {
+      "get": {
+        "tags": [
+          "Configuration"
+        ],
+        "summary": "Lire la configuration MQTT",
+        "operationId": "getMQTTConfig",
+        "responses": {
+          "200": {
+            "description": "Réglages courants.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MQTTConfig"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Configuration"
+        ],
+        "summary": "Modifier la configuration MQTT",
+        "operationId": "updateMQTTConfig",
+        "description": "Les champs absents ou vides restent inchangés. Le broker n'étant lu qu'au démarrage, la réponse signale qu'un redémarrage est nécessaire.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MQTTConfigUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Enregistré.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigUpdateRebootResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "JSON malformé ou valeur refusée.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "description": "Échec de la sauvegarde.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/config/homekit": {
+      "get": {
+        "tags": [
+          "Configuration"
+        ],
+        "summary": "Lire la configuration HomeKit",
+        "operationId": "getHomeKitConfig",
+        "responses": {
+          "200": {
+            "description": "Réglages courants.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HomeKitConfig"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Configuration"
+        ],
+        "summary": "Modifier la configuration HomeKit",
+        "operationId": "updateHomeKitConfig",
+        "description": "Renvoyer le code d'appairage masqué le laisse inchangé.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HomeKitConfigUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Enregistré.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigUpdateResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "JSON malformé ou valeur refusée.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "description": "Échec de la sauvegarde.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/config/alarm": {
+      "get": {
+        "tags": [
+          "Configuration"
+        ],
+        "summary": "Lire la configuration de l'alarme",
+        "operationId": "getAlarmConfig",
+        "responses": {
+          "200": {
+            "description": "Réglages courants.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlarmConfig"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Configuration"
+        ],
+        "summary": "Modifier la configuration de l'alarme",
+        "operationId": "updateAlarmConfig",
+        "description": "Modification partielle : seuls les champs fournis sont appliqués. Les nouveaux délais sont propagés au moteur en cours d'exécution.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AlarmConfigUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Enregistré.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigUpdateResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "JSON malformé ou valeur refusée.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "description": "Échec de la sauvegarde.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/config/web": {
+      "get": {
+        "tags": [
+          "Configuration"
+        ],
+        "summary": "Lire la configuration du serveur web",
+        "operationId": "getWebConfig",
+        "responses": {
+          "200": {
+            "description": "Réglages courants.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebConfig"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Configuration"
+        ],
+        "summary": "Modifier la configuration du serveur web",
+        "operationId": "updateWebConfig",
+        "description": "Désactiver le serveur web coupe aussi cette API. Revenir en arrière demande alors un accès à la carte SD.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebConfig"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Enregistré.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigUpdateRestartResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "JSON malformé ou valeur refusée.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "description": "Échec de la sauvegarde.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/config/admin": {
+      "get": {
+        "tags": [
+          "Configuration"
+        ],
+        "summary": "Lire l'authentification",
+        "operationId": "getAdminConfig",
+        "responses": {
+          "200": {
+            "description": "Réglages courants.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminConfig"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Configuration"
+        ],
+        "summary": "Modifier l'authentification",
+        "operationId": "updateAdminConfig",
+        "description": "Le mot de passe est stocké haché. Une chaîne vide désactive l'authentification et ouvre l'API à quiconque atteint la caméra.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Enregistré.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminUpdateResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "JSON malformé ou valeur refusée.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "description": "Échec de la sauvegarde.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/config/fbxhome_alarm": {
+      "get": {
+        "tags": [
+          "Configuration"
+        ],
+        "summary": "Lire les temporisations du firmware constructeur",
+        "operationId": "getFbxhomeAlarmTimings",
+        "responses": {
+          "200": {
+            "description": "Réglages courants.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FbxhomeAlarmTimings"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Indisponible en mode `charmux`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Configuration"
+        ],
+        "summary": "Modifier les temporisations du firmware constructeur",
+        "operationId": "updateFbxhomeAlarmTimings",
+        "description": "Seules les valeurs strictement positives sont écrites.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FbxhomeAlarmTimings"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Enregistré.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigUpdateResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Indisponible en mode `charmux`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "description": "Échec de la sauvegarde.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/update": {
+      "get": {
+        "tags": [
+          "Mise à jour"
+        ],
+        "summary": "Vérifier les mises à jour",
+        "operationId": "checkUpdate",
+        "description": "Résultat mis en cache une heure.",
+        "parameters": [
+          {
+            "name": "force",
+            "in": "query",
+            "required": false,
+            "description": "Passer `1` pour ignorer le cache.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Version installée et dernière publiée.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateCheck"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "502": {
+            "description": "GitHub est injoignable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Mise à jour non configurée sur cette compilation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/update/status": {
+      "get": {
+        "tags": [
+          "Mise à jour"
+        ],
+        "summary": "Suivre une installation",
+        "operationId": "getUpdateStatus",
+        "responses": {
+          "200": {
+            "description": "Avancement courant.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstallStatus"
+                },
+                "examples": {
+                  "idle": {
+                    "summary": "Aucune installation",
+                    "value": {
+                      "step": "idle"
+                    }
+                  },
+                  "downloading": {
+                    "summary": "Téléchargement",
+                    "value": {
+                      "step": "downloading",
+                      "version": "v0.1.0-rc.12",
+                      "progress": 63,
+                      "bytes": 6553600,
+                      "total_bytes": 10485760,
+                      "started_at": "2026-09-21T08:12:00Z"
+                    }
+                  },
+                  "failed": {
+                    "summary": "Échec",
+                    "value": {
+                      "step": "failed",
+                      "version": "v0.1.0-rc.12",
+                      "error": "checksum mismatch",
+                      "started_at": "2026-09-21T08:12:00Z",
+                      "updated_at": "2026-09-21T08:13:04Z"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "description": "Mise à jour non configurée sur cette compilation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/commands/alarm": {
+      "post": {
+        "tags": [
+          "Commandes"
+        ],
+        "summary": "Armer ou désarmer",
+        "operationId": "commandAlarm",
+        "description": "Armer ou désarmer l'alarme.\n\nL'état renvoyé est optimiste en mode `alarmo` : Home Assistant Alarmo confirme ou corrige peu après via MQTT. Relire `/api/v1/alarm` ou s'abonner au flux d'événements pour connaître l'état réel.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AlarmCommand"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Commande transmise.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlarmCommandResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "JSON malformé ou action inconnue.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/commands/reboot": {
+      "post": {
+        "tags": [
+          "Commandes"
+        ],
+        "summary": "Redémarrer la caméra",
+        "operationId": "commandReboot",
+        "description": "Redémarre la caméra. La réponse est envoyée **avant** le redémarrage, qui intervient environ une demi-seconde plus tard : un échec ne serait pas remonté. La caméra est injoignable une minute environ.",
+        "responses": {
+          "200": {
+            "description": "Redémarrage programmé.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OK"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/commands/shutter": {
+      "post": {
+        "tags": [
+          "Commandes"
+        ],
+        "summary": "Ouvrir ou fermer le cache",
+        "operationId": "commandShutter",
+        "description": "Pilote le cache mécanique de l'objectif.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShutterCommand"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Position appliquée.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShutterResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "JSON malformé.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "description": "Le matériel n'a pas répondu.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/commands/siren/test": {
+      "post": {
+        "tags": [
+          "Commandes"
+        ],
+        "summary": "Tester la sirène",
+        "operationId": "commandSirenTest",
+        "description": "Déclenche le son de test de la première sirène appairée.\n\nEn mode `charmux`, c'est un bip court. **En mode `fbxhome` — le mode par défaut — le firmware produit un bref hurlement d'environ une seconde**, bien plus fort qu'un bip. Prévenir avant d'essayer.",
+        "responses": {
+          "200": {
+            "description": "Commande acceptée.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OK"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Aucune sirène appairée.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "La sirène n'a pas répondu.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/commands/siren/alarm_test": {
+      "post": {
+        "tags": [
+          "Commandes"
+        ],
+        "summary": "Déclencher le son d'intrusion",
+        "operationId": "commandSirenAlarmTest",
+        "description": "**Bruyant.** Déclenche le son d'alarme réel pour la durée configurée. Prévenir le voisinage avant d'essayer.\n\nEn mode `fbxhome`, la durée est décidée par le firmware.",
+        "responses": {
+          "200": {
+            "description": "Sirène déclenchée.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SirenAlarmTestResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Aucune sirène appairée.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "La sirène n'a pas répondu.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/commands/stream/start": {
+      "post": {
+        "tags": [
+          "Commandes"
+        ],
+        "summary": "Démarrer le flux HLS",
+        "operationId": "commandStreamStart",
+        "description": "Ouvre le cache de l'objectif et relance le pipeline vidéo. Un échec d'ouverture du cache n'est pas bloquant, contrairement à un échec du pipeline.",
+        "responses": {
+          "200": {
+            "description": "Flux démarré.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HLSStreamStarted"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "description": "Le pipeline vidéo n'a pas démarré.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/commands/stream/open": {
+      "post": {
+        "tags": [
+          "Commandes"
+        ],
+        "summary": "Ouvrir un flux SRT",
+        "operationId": "commandStreamOpen",
+        "description": "Alternative à HLS, à plus faible latence. L'URL renvoyée est construite à partir de l'hôte de la requête.",
+        "responses": {
+          "200": {
+            "description": "Paramètres de connexion.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StreamInfo"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "description": "Le flux n'a pas pu être ouvert.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/commands/update/install": {
+      "post": {
+        "tags": [
+          "Commandes"
+        ],
+        "summary": "Installer une mise à jour",
+        "operationId": "commandInstallUpdate",
+        "description": "Lance l'installation en arrière-plan et rend la main aussitôt. Suivre l'avancement via l'état d'installation. Le binaire courant est sauvegardé avant remplacement ; un redémarrage applique la nouvelle version.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InstallRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Installation démarrée.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstallStatus"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Aucune version à installer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "Une installation est déjà en cours.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "GitHub est injoignable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Mise à jour non configurée sur cette compilation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/commands/debug/pkt": {
+      "post": {
+        "tags": [
+          "Commandes"
+        ],
+        "summary": "Envoyer une trame brute au MCU",
+        "operationId": "commandDebugPKT",
+        "description": "**Réservé au développement.** Monté uniquement si le daemon tourne avec `-debug`, sinon `404`.\n\nAucune validation métier : certaines séquences rendent le MCU radio inutilisable jusqu'à une réinstallation du firmware d'origine.",
+        "x-dangerous": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "hex"
+                ],
+                "properties": {
+                  "hex": {
+                    "type": "string",
+                    "pattern": "^[0-9a-fA-F]*$",
+                    "description": "Trame en hexadécimal."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Trame envoyée.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "len"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "description": "Toujours `true` dans une réponse de succès."
+                    },
+                    "len": {
+                      "type": "integer",
+                      "description": "Octets transmis."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "JSON malformé ou hexadécimal invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Endpoints de débogage désactivés : le daemon ne tourne pas avec `-debug`. C'est le cas par défaut.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Le MCU a refusé la trame.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/commands/debug/siren/sequence": {
+      "post": {
+        "tags": [
+          "Commandes"
+        ],
+        "summary": "Envoyer une séquence brute à une sirène",
+        "operationId": "commandDebugSirenSequence",
+        "description": "**Réservé au développement.** Monté uniquement si le daemon tourne avec `-debug`, sinon `404`.\n\nAucune validation métier : certaines séquences rendent le MCU radio inutilisable jusqu'à une réinstallation du firmware d'origine.\n\nDisponible uniquement en mode `charmux`.",
+        "x-dangerous": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "payload"
+                ],
+                "properties": {
+                  "payload": {
+                    "type": "string",
+                    "description": "Charge utile en hexadécimal."
+                  },
+                  "addr": {
+                    "type": "integer",
+                    "description": "Adresse de la sirène.",
+                    "default": 18
+                  },
+                  "handshake": {
+                    "type": "boolean",
+                    "description": "Émettre la poignée de main préalable.",
+                    "default": true
+                  },
+                  "stop": {
+                    "type": "boolean",
+                    "description": "Émettre la trame d'arrêt à la fin.",
+                    "default": true
+                  },
+                  "hold_ms": {
+                    "type": "integer",
+                    "description": "Attente entre la charge utile et l'arrêt, en millisecondes.",
+                    "default": 3400
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Séquence exécutée.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OK"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "JSON malformé, charge utile absente ou hexadécimal invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Endpoints de débogage désactivés : le daemon ne tourne pas avec `-debug`. C'est le cas par défaut.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "La séquence a échoué.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Indisponible en mode `fbxhome`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/events": {
+      "get": {
+        "tags": [
+          "Événements"
+        ],
+        "summary": "S'abonner au flux d'événements",
+        "operationId": "streamEvents",
+        "description": "Flux Server-Sent Events. Trois types d'événements sont émis :\n\n| Type | Charge utile | Quand |\n|---|---|---|\n| `status` | `Status` | toutes les 5 secondes |\n| `alarm` | `AlarmSnapshot` | à chaque changement, puis chaque seconde tant qu'un délai court |\n| `sensor` | `Sensor` | à chaque événement radio |\n\n**Le dernier événement de chaque type est rejoué à la connexion.** Attention : un type jamais publié depuis le démarrage du daemon n'est pas rejoué — une alarme restée désarmée n'a produit aucun événement `alarm`, et aucun capteur ne s'est peut-être manifesté. Lire les ressources correspondantes pour l'état initial, puis suivre ce flux pour les changements.\n\nUn commentaire `: ping` est émis toutes les 30 secondes pour maintenir la connexion.\n\n**Ne pas consommer cette route avec un client généré** : les générateurs OpenAPI lisent la réponse jusqu'à sa fermeture, or ce flux reste ouvert indéfiniment. Utiliser un client SSE natif — `EventSource` côté navigateur, `httpx.stream` ou `aiohttp` côté Python.",
+        "responses": {
+          "200": {
+            "description": "Flux ouvert.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                },
+                "example": "event: alarm\ndata: {\"state\":\"armed_away\",\"armed_at\":1789891779}\n\nevent: status\ndata: {\"mqtt_connected\":true,\"sensor_count\":4,\"uptime\":45,\"version\":\"v0.1.0-rc.11\"}\n\n"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "description": "Le transport ne permet pas le streaming.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/stream/{file}": {
+      "get": {
+        "tags": [
+          "Événements"
+        ],
+        "summary": "Récupérer un segment vidéo",
+        "operationId": "getHLSFile",
+        "description": "Sert les playlists et segments HLS produits par la caméra. Demander la playlist relance le pipeline s'il s'est arrêté : la requête courante peut échouer, la suivante aboutira.\n\nLes segments `.m4s` contiennent du MPEG-TS malgré l'extension.\n\n**Chemins imbriqués** : les variantes de qualité vivent dans un sous-dossier (`/stream/720p/HLS_TEST.m3u8`). Un paramètre de chemin OpenAPI ne traverse pas les `/` — construire ces URL en concaténant, sans encoder le séparateur, plutôt qu'en passant le chemin entier comme valeur de `file`.",
+        "parameters": [
+          {
+            "name": "file",
+            "in": "path",
+            "required": true,
+            "description": "Nom du fichier à la racine du flux.",
+            "schema": {
+              "type": "string"
+            },
+            "example": "HLS_TEST.m3u8"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Contenu du fichier.",
+            "content": {
+              "application/vnd.apple.mpegurl": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "video/mp2t": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Fichier absent ou extension non servie.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/stream/{variant}/{file}": {
+      "get": {
+        "tags": [
+          "Événements"
+        ],
+        "summary": "Récupérer un segment vidéo d'une variante",
+        "operationId": "getHLSVariantFile",
+        "description": "Même chose que la route sans sous-dossier, pour les variantes de qualité produites par la caméra.",
+        "parameters": [
+          {
+            "name": "variant",
+            "in": "path",
+            "required": true,
+            "description": "Sous-dossier de variante.",
+            "schema": {
+              "type": "string"
+            },
+            "example": "720p"
+          },
+          {
+            "name": "file",
+            "in": "path",
+            "required": true,
+            "description": "Nom du fichier.",
+            "schema": {
+              "type": "string"
+            },
+            "example": "HLS_TEST.m3u8"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Contenu du fichier.",
+            "content": {
+              "application/vnd.apple.mpegurl": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "video/mp2t": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Fichier absent ou extension non servie.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "adminBasicAuth": {
+        "type": "http",
+        "scheme": "basic",
+        "description": "Authentification par mot de passe, utilisateur `admin`.\n\n**Elle n'est active que si un mot de passe a été configuré.** Tant que ce n'est pas le cas, l'API est ouverte à quiconque atteint la caméra, y compris les commandes qui pilotent l'alarme.\n\nPour savoir si elle est active sans tenter un appel : `GET /api/v1/config/admin` renvoie `password_set`."
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "description": "Toute erreur est renvoyée sous cette forme, y compris les 404 et 410.",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "Message lisible, en français.",
+            "examples": [
+              "le code doit être composé de 4 chiffres"
+            ]
+          },
+          "path": {
+            "type": "string",
+            "description": "Chemin demandé. Présent sur les 404 et 410.",
+            "examples": [
+              "/api/v1/typo"
+            ]
+          },
+          "method": {
+            "type": "string",
+            "description": "Méthode demandée. Présent sur les 404.",
+            "examples": [
+              "GET"
+            ]
+          },
+          "see": {
+            "type": "string",
+            "description": "Où trouver la documentation.",
+            "examples": [
+              "docs/api.md"
+            ]
+          },
+          "version": {
+            "type": "string",
+            "description": "Version courante de l'API. Présent sur les 410.",
+            "examples": [
+              "v1"
+            ]
+          }
+        }
+      },
+      "OK": {
+        "type": "object",
+        "description": "Accusé de réception minimal.",
+        "required": [
+          "ok"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "description": "Toujours `true` dans une réponse de succès."
+          }
+        }
+      },
+      "SensorType": {
+        "type": "string",
+        "description": "Famille de capteur DomusRF.\n\n- `DWS` — ouvrant (porte, fenêtre)\n- `PIR` — détecteur de mouvement\n- `SRN` — sirène\n- `KPD` — clavier",
+        "enum": [
+          "DWS",
+          "PIR",
+          "SRN",
+          "KPD"
+        ]
+      },
+      "AlarmState": {
+        "type": "string",
+        "description": "État de l'alarme.\n\n- `disarmed` — désarmée\n- `arming` — délai de sortie en cours, la surveillance n'a pas commencé\n- `armed_away` — armée, absence\n- `armed_night` — armée, nuit (les capteurs marqués `night_allowed` sont ignorés)\n- `pending` — un capteur s'est déclenché, délai d'entrée en cours\n- `triggered` — sirène active",
+        "enum": [
+          "disarmed",
+          "arming",
+          "armed_away",
+          "armed_night",
+          "pending",
+          "triggered"
+        ]
+      },
+      "Sensor": {
+        "type": "object",
+        "description": "Capteur tel que le MCU le connaît. `open` ne vaut que pour un DWS et `motion` que pour un PIR : le firmware expose un booléen générique, décodé selon le type.",
+        "required": [
+          "id",
+          "type",
+          "type_name",
+          "item_id",
+          "battery",
+          "temperature",
+          "reachable",
+          "open",
+          "motion",
+          "last_seen"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "description": "Identifiant de nœud DomusRF. Stable.",
+            "examples": [
+              23
+            ]
+          },
+          "type": {
+            "$ref": "#/components/schemas/SensorType"
+          },
+          "type_name": {
+            "type": "string",
+            "description": "Type interne fbxhome.",
+            "examples": [
+              "Node.DomusNode.HlDws"
+            ]
+          },
+          "item_id": {
+            "type": "string",
+            "description": "Identifiant matériel.",
+            "examples": [
+              "562e741c4f5bd5e6"
+            ]
+          },
+          "battery": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+            "description": "Niveau de batterie en pourcent.",
+            "examples": [
+              100
+            ]
+          },
+          "temperature": {
+            "type": "integer",
+            "description": "Valeur brute du firmware. La conversion en °C n'est pas connue ; ne pas diviser par 10 sans vérifier.",
+            "examples": [
+              200
+            ]
+          },
+          "reachable": {
+            "type": "boolean",
+            "description": "Le capteur a répondu récemment."
+          },
+          "open": {
+            "type": "boolean",
+            "description": "DWS : ouvrant ouvert. Toujours `false` sur les autres types."
+          },
+          "motion": {
+            "type": "boolean",
+            "description": "PIR : mouvement en cours. Toujours `false` sur les autres types."
+          },
+          "kpd_state": {
+            "type": "string",
+            "description": "KPD : dernier état demandé depuis le clavier.",
+            "enum": [
+              "disarmed",
+              "armed_away",
+              "armed_night"
+            ]
+          },
+          "last_seen": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Horodatage Unix du dernier contact. `0` si jamais vu depuis le démarrage."
+          }
+        }
+      },
+      "SensorWithMeta": {
+        "description": "Capteur enrichi des métadonnées persistées par openqiarad : libellé donné par l'utilisateur et drapeaux de comportement de l'alarme.",
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Sensor"
+          },
+          {
+            "type": "object",
+            "required": [
+              "label",
+              "night_allowed"
+            ],
+            "properties": {
+              "label": {
+                "type": "string",
+                "description": "Nom donné par l'utilisateur. Vide si jamais renommé."
+              },
+              "night_allowed": {
+                "type": "boolean",
+                "description": "Capteur ignoré en mode nuit (typiquement un PIR dans une chambre)."
+              },
+              "day_alarm": {
+                "type": "boolean",
+                "description": "Déclenche l'alarme en mode jour. Absent si jamais configuré."
+              },
+              "night_alarm": {
+                "type": "boolean",
+                "description": "Déclenche l'alarme en mode nuit. Absent si jamais configuré."
+              },
+              "day_timed": {
+                "type": "boolean",
+                "description": "Applique le délai d'entrée en mode jour. Absent si jamais configuré."
+              },
+              "night_timed": {
+                "type": "boolean",
+                "description": "Applique le délai d'entrée en mode nuit. Absent si jamais configuré."
+              }
+            }
+          }
+        ]
+      },
+      "AlarmSnapshot": {
+        "type": "object",
+        "description": "Instantané de l'alarme. Les champs optionnels n'apparaissent que lorsqu'ils ont un sens.",
+        "required": [
+          "state"
+        ],
+        "properties": {
+          "state": {
+            "$ref": "#/components/schemas/AlarmState"
+          },
+          "armed_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Horodatage Unix de l'armement."
+          },
+          "triggered_by": {
+            "type": "integer",
+            "description": "Identifiant du capteur à l'origine du déclenchement."
+          },
+          "previous_state": {
+            "$ref": "#/components/schemas/AlarmState"
+          },
+          "timer_remaining": {
+            "type": "integer",
+            "description": "Secondes restantes sur le délai en cours (`arming` ou `pending`)."
+          }
+        }
+      },
+      "Status": {
+        "type": "object",
+        "required": [
+          "uptime",
+          "mqtt_connected",
+          "sensor_count",
+          "version"
+        ],
+        "properties": {
+          "uptime": {
+            "type": "integer",
+            "description": "Secondes écoulées depuis le démarrage du daemon."
+          },
+          "mqtt_connected": {
+            "type": "boolean",
+            "description": "Connexion au broker MQTT active."
+          },
+          "sensor_count": {
+            "type": "integer",
+            "description": "Nombre de capteurs connus. Retombe à `0` si le MCU ne répond pas."
+          },
+          "version": {
+            "type": "string",
+            "description": "Version du daemon. `dev` pour une compilation locale.",
+            "examples": [
+              "v0.1.0-rc.11"
+            ]
+          }
+        }
+      },
+      "MQTTConfig": {
+        "type": "object",
+        "description": "Connexion au broker MQTT. Les secrets sont renvoyés masqués (`********`). Réécrire cette valeur telle quelle laisse le secret stocké intact, ce qui permet de relire la configuration et de la sauvegarder sans effacer ce qu'on n'a pas vu.\n\nLe broker n'est lu qu'au démarrage : une modification exige un redémarrage.",
+        "required": [
+          "broker"
+        ],
+        "properties": {
+          "broker": {
+            "type": "string",
+            "description": "Adresse du broker. Le schéma est optionnel (`tcp` par défaut) et le port vaut 1883 s'il est omis.",
+            "examples": [
+              "tcp://192.0.2.10:1883",
+              "homeassistant.local"
+            ]
+          },
+          "username": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string",
+            "readOnly": true,
+            "description": "Masqué. Utiliser `MQTTConfigUpdate` pour le définir.",
+            "examples": [
+              "********"
+            ]
+          },
+          "topic_prefix": {
+            "type": "string",
+            "description": "Préfixe des topics publiés.",
+            "default": "openqiara"
+          }
+        }
+      },
+      "MQTTConfigUpdate": {
+        "type": "object",
+        "description": "Réglages MQTT à écrire. Les champs absents ou vides restent inchangés ; renvoyer le mot de passe masqué le laisse intact.",
+        "properties": {
+          "broker": {
+            "type": "string",
+            "description": "Adresse du broker. Le schéma est optionnel (`tcp` par défaut) et le port vaut 1883 s'il est omis.",
+            "examples": [
+              "tcp://192.0.2.10:1883",
+              "homeassistant.local"
+            ]
+          },
+          "username": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string",
+            "description": "Mot de passe du broker, ou `********` pour ne pas y toucher."
+          },
+          "topic_prefix": {
+            "type": "string",
+            "description": "Préfixe des topics publiés.",
+            "default": "openqiara"
+          }
+        }
+      },
+      "HomeKitCameraConfig": {
+        "type": "object",
+        "description": "Accessoire caméra exposé dans le pont HomeKit.",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "hls_path": {
+            "type": "string",
+            "description": "Chemin de la playlist HLS servie à HomeKit."
+          }
+        }
+      },
+      "HomeKitConfig": {
+        "type": "object",
+        "description": "Pont HomeKit. Les secrets sont renvoyés masqués (`********`). Réécrire cette valeur telle quelle laisse le secret stocké intact, ce qui permet de relire la configuration et de la sauvegarder sans effacer ce qu'on n'a pas vu.",
+        "required": [
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "pin": {
+            "type": "string",
+            "readOnly": true,
+            "description": "Code d'appairage, masqué. Utiliser `HomeKitConfigUpdate` pour le définir.",
+            "examples": [
+              "********"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "description": "Nom du pont tel qu'il apparaît dans l'app Maison."
+          },
+          "camera": {
+            "$ref": "#/components/schemas/HomeKitCameraConfig"
+          }
+        }
+      },
+      "HomeKitConfigUpdate": {
+        "type": "object",
+        "description": "Réglages HomeKit à écrire. Omettre `pin`, ou renvoyer la valeur masquée lue précédemment, laisse le code d'appairage inchangé.",
+        "required": [
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "pin": {
+            "type": "string",
+            "description": "Code d'appairage à 8 chiffres. Les codes triviaux sont refusés : iOS les rejette de toute façon. Accepte aussi la valeur masquée `********`, qui laisse le code inchangé.",
+            "examples": [
+              "84213765"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "description": "Nom du pont tel qu'il apparaît dans l'app Maison."
+          },
+          "camera": {
+            "$ref": "#/components/schemas/HomeKitCameraConfig"
+          }
+        }
+      },
+      "AdminConfig": {
+        "type": "object",
+        "description": "État de l'authentification. Ni le mot de passe ni son empreinte ne sont jamais exposés.",
+        "required": [
+          "password_set"
+        ],
+        "properties": {
+          "password_set": {
+            "type": "boolean",
+            "description": "Une authentification est configurée. Lorsqu'elle est `false`, l'API est ouverte à quiconque atteint la caméra."
+          }
+        }
+      },
+      "AdminUpdate": {
+        "type": "object",
+        "description": "Définit le mot de passe d'administration. Une chaîne vide désactive l'authentification.",
+        "required": [
+          "password"
+        ],
+        "properties": {
+          "password": {
+            "type": "string",
+            "description": "8 caractères minimum, ou chaîne vide pour désactiver l'authentification.",
+            "examples": [
+              ""
+            ]
+          }
+        }
+      },
+      "WebConfig": {
+        "type": "object",
+        "description": "Serveur web. Le désactiver coupe aussi cette API : il faut alors passer par la carte SD pour revenir en arrière.",
+        "required": [
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          }
+        }
+      },
+      "AlarmConfig": {
+        "type": "object",
+        "description": "Comportement de l'alarme.\n\nEn mode `standalone`, le moteur local décide. En mode `alarmo`, Home Assistant Alarmo est la source de vérité et le moteur local est désactivé.\n\nEn lecture, les sept champs sont toujours présents : les valeurs par défaut sont appliquées à la volée.",
+        "required": [
+          "mode",
+          "alarmo_command_topic",
+          "alarmo_state_topic",
+          "siren_sounds",
+          "arming_delay_seconds",
+          "pending_delay_seconds",
+          "wail_duration_seconds"
+        ],
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "standalone",
+              "alarmo"
+            ],
+            "default": "standalone"
+          },
+          "alarmo_command_topic": {
+            "type": "string",
+            "default": "alarmo/command"
+          },
+          "alarmo_state_topic": {
+            "type": "string",
+            "default": "alarmo/state"
+          },
+          "siren_sounds": {
+            "type": "string",
+            "enum": [
+              "all",
+              "alarm_only",
+              "none"
+            ],
+            "description": "Quels sons la sirène émet.\n\n- `all` — bips d'armement et de désarmement, plus l'alarme\n- `alarm_only` — uniquement l'alarme\n- `none` — silencieuse",
+            "default": "all"
+          },
+          "arming_delay_seconds": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 600,
+            "description": "Délai de sortie après un armement local."
+          },
+          "pending_delay_seconds": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 600,
+            "description": "Délai d'entrée avant le déclenchement de la sirène."
+          },
+          "wail_duration_seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 60,
+            "description": "Durée de la sirène en mode charmux. En mode fbxhome, le firmware décide."
+          }
+        }
+      },
+      "AlarmConfigUpdate": {
+        "type": "object",
+        "description": "Réglages d'alarme à écrire. Modification partielle : seuls les champs fournis sont appliqués, les autres restent inchangés.",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "standalone",
+              "alarmo"
+            ],
+            "default": "standalone"
+          },
+          "alarmo_command_topic": {
+            "type": "string",
+            "default": "alarmo/command"
+          },
+          "alarmo_state_topic": {
+            "type": "string",
+            "default": "alarmo/state"
+          },
+          "siren_sounds": {
+            "type": "string",
+            "enum": [
+              "all",
+              "alarm_only",
+              "none"
+            ],
+            "description": "Quels sons la sirène émet.\n\n- `all` — bips d'armement et de désarmement, plus l'alarme\n- `alarm_only` — uniquement l'alarme\n- `none` — silencieuse",
+            "default": "all"
+          },
+          "arming_delay_seconds": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 600,
+            "description": "Délai de sortie après un armement local."
+          },
+          "pending_delay_seconds": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 600,
+            "description": "Délai d'entrée avant le déclenchement de la sirène."
+          },
+          "wail_duration_seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 60,
+            "description": "Durée de la sirène en mode charmux. En mode fbxhome, le firmware décide."
+          }
+        }
+      },
+      "FbxhomeAlarmTimings": {
+        "type": "object",
+        "description": "Temporisations du moteur d'alarme du firmware constructeur. Disponible uniquement en mode `fbxhome`.",
+        "required": [
+          "timeout_before_armed",
+          "timeout_before_alert",
+          "timeout_alert",
+          "history_when_armed"
+        ],
+        "properties": {
+          "timeout_before_armed": {
+            "type": "integer",
+            "description": "Délai de sortie, en secondes."
+          },
+          "timeout_before_alert": {
+            "type": "integer",
+            "description": "Délai d'entrée, en secondes."
+          },
+          "timeout_alert": {
+            "type": "integer",
+            "description": "Durée de l'alerte, en secondes."
+          },
+          "history_when_armed": {
+            "type": "boolean",
+            "description": "Journaliser les événements capteurs pendant que l'alarme est armée."
+          }
+        }
+      },
+      "Config": {
+        "type": "object",
+        "description": "Configuration complète, en lecture seule. Chaque sous-ressource a son propre `GET`/`PUT`.",
+        "required": [
+          "mqtt",
+          "homekit",
+          "admin",
+          "web",
+          "camera_mode",
+          "alarm"
+        ],
+        "properties": {
+          "mqtt": {
+            "$ref": "#/components/schemas/MQTTConfig"
+          },
+          "homekit": {
+            "$ref": "#/components/schemas/HomeKitConfig"
+          },
+          "admin": {
+            "$ref": "#/components/schemas/AdminConfig"
+          },
+          "web": {
+            "$ref": "#/components/schemas/WebConfig"
+          },
+          "camera_mode": {
+            "type": "string",
+            "enum": [
+              "fbxhome",
+              "charmux"
+            ],
+            "description": "Comment le daemon parle au matériel.\n\n- `fbxhome` — via le daemon constructeur (mode testé)\n- `charmux` — pilotage direct du MCU\n\nCertains réglages n'ont de sens que dans l'un des deux."
+          },
+          "alarm": {
+            "$ref": "#/components/schemas/AlarmConfig"
+          }
+        }
+      },
+      "Release": {
+        "type": "object",
+        "description": "Publication GitHub.",
+        "properties": {
+          "tag_name": {
+            "type": "string",
+            "examples": [
+              "v0.1.0-rc.11"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string",
+            "description": "Notes de version, en Markdown."
+          },
+          "published_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "html_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "prerelease": {
+            "type": "boolean"
+          }
+        }
+      },
+      "UpdateCheck": {
+        "type": "object",
+        "description": "Résultat de la vérification de mise à jour. Mis en cache une heure, sauf `?force=1`.",
+        "required": [
+          "current",
+          "latest",
+          "update_needed",
+          "checked_at"
+        ],
+        "properties": {
+          "current": {
+            "type": "string",
+            "description": "Version installée.",
+            "examples": [
+              "v0.1.0-rc.11"
+            ]
+          },
+          "latest": {
+            "$ref": "#/components/schemas/Release"
+          },
+          "update_needed": {
+            "type": "boolean"
+          },
+          "checked_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "InstallStatus": {
+        "type": "object",
+        "description": "Avancement d'une installation. À interroger après avoir lancé la commande d'installation.",
+        "required": [
+          "step"
+        ],
+        "properties": {
+          "step": {
+            "type": "string",
+            "enum": [
+              "idle",
+              "downloading",
+              "verifying",
+              "backing_up",
+              "swapping",
+              "done",
+              "failed"
+            ],
+            "description": "Étape en cours.\n\n- `idle` — aucune installation\n- `downloading` — téléchargement\n- `verifying` — vérification de l'empreinte\n- `backing_up` — sauvegarde du binaire actuel\n- `swapping` — remplacement\n- `done` — terminée, un redémarrage applique la nouvelle version\n- `failed` — échouée, voir `error`"
+          },
+          "version": {
+            "type": "string"
+          },
+          "progress": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+            "description": "Progression du téléchargement en pourcent."
+          },
+          "bytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "total_bytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "error": {
+            "type": "string",
+            "description": "Cause de l'échec. Présent seulement si `step` vaut `failed`."
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "KPDCode": {
+        "type": "object",
+        "description": "Code PIN du clavier. Renvoyé en clair : c'est celui qui désarme l'alarme, l'interface l'affiche pour que l'utilisateur le retrouve. Ne pas exposer cette API hors du réseau local.",
+        "required": [
+          "sensor_id",
+          "code"
+        ],
+        "properties": {
+          "sensor_id": {
+            "type": "integer",
+            "description": "Identifiant du clavier concerné.",
+            "examples": [
+              14
+            ]
+          },
+          "code": {
+            "description": "Code configuré, ou `null` si le clavier n'en a pas.",
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "password",
+                  "label"
+                ],
+                "properties": {
+                  "password": {
+                    "type": "string",
+                    "pattern": "^[0-9]{4}$",
+                    "examples": [
+                      "4821"
+                    ]
+                  },
+                  "label": {
+                    "type": "string",
+                    "description": "Nom du code. Vaut `Code` si rien n'a été précisé.",
+                    "examples": [
+                      "admin"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "KPDCodeUpdate": {
+        "type": "object",
+        "required": [
+          "password"
+        ],
+        "properties": {
+          "password": {
+            "type": "string",
+            "pattern": "^[0-9]{4}$",
+            "description": "Exactement 4 chiffres. Le firmware n'en accepte qu'un seul par installation.",
+            "examples": [
+              "4821"
+            ]
+          },
+          "label": {
+            "type": "string",
+            "description": "Nom du code.",
+            "default": "Code"
+          }
+        }
+      },
+      "PairingStart": {
+        "type": "object",
+        "required": [
+          "type"
+        ],
+        "properties": {
+          "type": {
+            "$ref": "#/components/schemas/SensorType"
+          },
+          "fingerprint": {
+            "type": "string",
+            "description": "Empreinte lue sur le QR code du capteur. Les espaces, tirets et majuscules sont tolérés ; seuls les 16 premiers caractères hexadécimaux comptent.",
+            "examples": [
+              "a4f4-d1ec-8ff1-376e"
+            ]
+          }
+        }
+      },
+      "PairingSession": {
+        "type": "object",
+        "required": [
+          "session"
+        ],
+        "properties": {
+          "session": {
+            "type": "integer",
+            "description": "Identifiant de session à interroger pour suivre l'appairage.",
+            "examples": [
+              1
+            ]
+          }
+        }
+      },
+      "PairingStatus": {
+        "type": "object",
+        "description": "État d'un appairage en cours. Interroger jusqu'à ce que `done` passe à `true`.\n\nLe capteur renvoyé ici sort du MCU : il ne porte pas encore les métadonnées d'openqiarad (libellé, drapeaux d'alarme). Les lire ensuite via la liste des capteurs.",
+        "required": [
+          "done"
+        ],
+        "properties": {
+          "done": {
+            "type": "boolean"
+          },
+          "sensor": {
+            "$ref": "#/components/schemas/Sensor"
+          }
+        }
+      },
+      "SensorUpdate": {
+        "type": "object",
+        "description": "Métadonnées d'un capteur. Au moins un champ est requis ; les autres restent inchangés.\n\nEn mode `fbxhome`, les quatre drapeaux d'alarme sont aussi poussés vers le firmware. Ces écritures sont au mieux-effort : un échec est journalisé mais la réponse reste `200`.",
+        "minProperties": 1,
+        "properties": {
+          "label": {
+            "type": "string",
+            "description": "Nom affiché. Renommer republie la découverte MQTT."
+          },
+          "night_allowed": {
+            "type": "boolean",
+            "description": "Ignorer ce capteur en mode nuit."
+          },
+          "day_alarm": {
+            "type": "boolean",
+            "description": "Déclenche l'alarme en mode jour."
+          },
+          "night_alarm": {
+            "type": "boolean",
+            "description": "Déclenche l'alarme en mode nuit."
+          },
+          "day_timed": {
+            "type": "boolean",
+            "description": "Applique le délai d'entrée en mode jour."
+          },
+          "night_timed": {
+            "type": "boolean",
+            "description": "Applique le délai d'entrée en mode nuit."
+          }
+        }
+      },
+      "AlarmCommand": {
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "arm_away",
+              "arm_night",
+              "disarm"
+            ],
+            "description": "Commande à exécuter. Une commande émise par l'API est considérée comme distante : elle s'applique sans délai de sortie, contrairement à un armement depuis le clavier physique."
+          }
+        }
+      },
+      "AlarmCommandResult": {
+        "type": "object",
+        "description": "État attendu après la commande. En mode `alarmo`, il est optimiste : Alarmo confirme ou corrige quelques centaines de millisecondes plus tard.",
+        "required": [
+          "ok",
+          "state"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "description": "Toujours `true` dans une réponse de succès."
+          },
+          "state": {
+            "$ref": "#/components/schemas/AlarmState"
+          }
+        }
+      },
+      "ShutterCommand": {
+        "type": "object",
+        "required": [
+          "open"
+        ],
+        "properties": {
+          "open": {
+            "type": "boolean",
+            "description": "`true` ouvre le cache de l'objectif, `false` le ferme."
+          }
+        }
+      },
+      "ShutterResult": {
+        "type": "object",
+        "required": [
+          "ok",
+          "open"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "description": "Toujours `true` dans une réponse de succès."
+          },
+          "open": {
+            "type": "boolean"
+          }
+        }
+      },
+      "StreamInfo": {
+        "type": "object",
+        "description": "Paramètres de connexion au flux SRT.",
+        "required": [
+          "srt_url",
+          "passphrase",
+          "port"
+        ],
+        "properties": {
+          "srt_url": {
+            "type": "string",
+            "description": "URL prête à l'emploi, construite depuis l'hôte de la requête.",
+            "examples": [
+              "srt://192.0.2.20:9000?passphrase=xxx&mode=caller"
+            ]
+          },
+          "passphrase": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer"
+          }
+        }
+      },
+      "HLSStreamStarted": {
+        "type": "object",
+        "description": "Chemins des playlists HLS. Le cache de l'objectif est ouvert au passage.",
+        "required": [
+          "ok",
+          "hls",
+          "720"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "description": "Toujours `true` dans une réponse de succès."
+          },
+          "hls": {
+            "type": "string",
+            "examples": [
+              "/stream/HLS_TEST.m3u8"
+            ]
+          },
+          "720": {
+            "type": "string",
+            "description": "Variante 720p.",
+            "examples": [
+              "/stream/720p/HLS_TEST.m3u8"
+            ]
+          }
+        }
+      },
+      "SirenAlarmTestResult": {
+        "type": "object",
+        "required": [
+          "ok",
+          "id"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "description": "Toujours `true` dans une réponse de succès."
+          },
+          "id": {
+            "type": "integer",
+            "description": "Identifiant de la sirène sollicitée."
+          }
+        }
+      },
+      "ConfigUpdateResult": {
+        "type": "object",
+        "description": "Réglages enregistrés, applicables immédiatement.",
+        "required": [
+          "ok"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "description": "Toujours `true` dans une réponse de succès."
+          }
+        }
+      },
+      "ConfigUpdateRebootResult": {
+        "type": "object",
+        "description": "Réglages enregistrés. Le broker n'étant lu qu'au démarrage, ils ne prendront effet qu'après un redémarrage de la caméra.",
+        "required": [
+          "ok",
+          "reboot_required"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "description": "Toujours `true` dans une réponse de succès."
+          },
+          "reboot_required": {
+            "type": "boolean",
+            "description": "Toujours `true` dans une réponse de succès."
+          }
+        }
+      },
+      "ConfigUpdateRestartResult": {
+        "type": "object",
+        "description": "Réglages enregistrés. Un redémarrage du daemon est nécessaire pour les appliquer.",
+        "required": [
+          "ok",
+          "restart_required"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "description": "Toujours `true` dans une réponse de succès."
+          },
+          "restart_required": {
+            "type": "boolean",
+            "description": "Toujours `true` dans une réponse de succès."
+          }
+        }
+      },
+      "AdminUpdateResult": {
+        "type": "object",
+        "description": "Mot de passe enregistré.",
+        "required": [
+          "ok",
+          "auth_enabled"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "description": "Toujours `true` dans une réponse de succès."
+          },
+          "auth_enabled": {
+            "type": "boolean",
+            "description": "L'authentification est active après ce changement. `false` signifie que l'API est désormais ouverte."
+          }
+        }
+      },
+      "InstallRequest": {
+        "type": "object",
+        "properties": {
+          "tag": {
+            "type": "string",
+            "description": "Version à installer. Par défaut, la dernière publiée.",
+            "examples": [
+              "v0.1.0-rc.11"
+            ]
+          }
+        }
+      }
+    },
+    "responses": {
+      "Unauthorized": {
+        "description": "Authentification requise ou incorrecte. N'arrive que si un mot de passe d'administration est configuré.",
+        "headers": {
+          "WWW-Authenticate": {
+            "schema": {
+              "type": "string"
+            },
+            "description": "`Basic realm=\"OpenQiara\"`"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Route absente de cette version de l'API. Réessayer après une mise à jour peut avoir du sens, contrairement à un `410`.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      }
+    }
+  }
+}

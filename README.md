@@ -281,7 +281,10 @@ go test ./...
 - [`docs/kpd.md`](docs/kpd.md) — détails du protocole clavier (PIN, armement/désarmement, particularités)
 - [`docs/mqtt.md`](docs/mqtt.md) — topics MQTT et discovery Home Assistant
 - [`docs/homekit.md`](docs/homekit.md) — intégration HomeKit
+- [`docs/api.md`](docs/api.md) — API HTTP locale (`/api/v1`)
+- [`docs/openapi.json`](docs/openapi.json) — la même en OpenAPI 3.1 : génération de client, Postman, Bruno
 - [`docs/protocol.md`](docs/protocol.md) — **référence protocole DomusRF** (pour contributeurs et curieux)
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — règles de contribution : CI, commits, synchronisation de l'API, conventions de rétro-ingénierie
 - [`SECURITY.md`](SECURITY.md) — politique de sécurité et report de vulnérabilités
 
 ## Quel rapport avec le firmware Qiara ?
