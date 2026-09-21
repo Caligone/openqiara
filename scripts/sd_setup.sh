@@ -54,6 +54,42 @@ if [ -z "$DISK" ] || [ -z "$WIFI_SSID" ] || [ -z "$WIFI_PASS" ]; then
     exit 1
 fi
 
+# The camera authorizes SSH from /data/ssh_authorized_keys and nothing else:
+# camera_boot.sh copies it to /root/.ssh/authorized_keys on every boot, and
+# there is no password login and no built-in key to fall back on. Flashing a
+# card without a key therefore produces a camera nobody can log into — the
+# web UI still works, but every SSH attempt returns "Permission denied".
+#
+# A typo in the path used to be worse than omitting the flag: the write was
+# guarded by [ -f "$SSH_PUBKEY" ], so a wrong path was skipped in silence and
+# the "ssh_authorized_keys ✓" line never printed — easy to miss in the scroll.
+if [ -n "$SSH_PUBKEY" ]; then
+    if [ ! -f "$SSH_PUBKEY" ]; then
+        echo "ERROR: --ssh-pubkey $SSH_PUBKEY does not exist"
+        echo "Generate one with: ssh-keygen -t ed25519"
+        exit 1
+    fi
+    case "$(cat "$SSH_PUBKEY")" in
+        ssh-ed25519\ *|ssh-rsa\ *|ecdsa-sha2-*) ;;
+        *)
+            echo "ERROR: $SSH_PUBKEY is not an SSH public key"
+            echo "Point --ssh-pubkey at the .pub file, not the private key."
+            exit 1;;
+    esac
+elif [ "$DRY_RUN" != true ]; then
+    echo "WARNING: no --ssh-pubkey given."
+    echo "         The camera will be reachable over HTTP but NOT over SSH,"
+    echo "         and the only way to add a key later is to re-flash this card."
+    echo "         Pass --ssh-pubkey ~/.ssh/id_ed25519.pub unless you are sure."
+    echo ""
+    printf "Continue without SSH access? [y/N] "
+    read -r REPLY
+    case "$REPLY" in
+        [Yy]*) ;;
+        *) echo "Aborted."; exit 1;;
+    esac
+fi
+
 # Reject CR/LF in credentials — invalid in any WiFi network and would
 # silently truncate when hlconnman reads the files line-by-line.
 # Other special chars ($ " \ space accents emoji) are preserved as-is because
@@ -243,7 +279,7 @@ DEBUGFS_CMDS+="write $TMPDIR/wifi_pass wifi_pass\n"
 DEBUGFS_CMDS+="write $TMPDIR/bridge bridge\n"
 
 # SSH public key
-if [ -n "$SSH_PUBKEY" ] && [ -f "$SSH_PUBKEY" ]; then
+if [ -n "$SSH_PUBKEY" ]; then
     DEBUGFS_CMDS+="write $SSH_PUBKEY ssh_authorized_keys\n"
 fi
 

@@ -217,6 +217,13 @@ sudo ./sd_setup_ubuntu.sh \
     --ssh-pubkey ~/.ssh/id_ed25519.pub
 ```
 
+> **`--ssh-pubkey` n'est pas optionnel en pratique.** La caméra n'autorise
+> aucun mot de passe et n'embarque aucune clé : l'accès SSH vient uniquement
+> de `/data/ssh_authorized_keys`, écrit par cette commande. Sans clé, la
+> caméra démarre et l'interface web répond, mais `ssh` renvoie
+> `Permission denied` — et la seule façon d'en ajouter une ensuite est de
+> refaire la carte SD.
+
 ### 4. Démarrage
 
 Réinsère la SD dans la caméra, allume-la, et attends ~60 secondes.
@@ -233,6 +240,21 @@ arp -a | grep lwip
 > configuré, l'état de l'interface `ssv0` et les messages `dmesg` du
 > driver wifi. Rappels : la puce est **2.4 GHz uniquement** et ne gère
 > que WPA2-PSK (pas WPA3-only ni WPA-Enterprise).
+
+> **`Permission denied (publickey)` en SSH ?** Deux causes, dans cet ordre :
+>
+> 1. **Aucune clé n'a été installée.** Vérifie depuis la SD :
+>    `debugfs -R "cat ssh_authorized_keys" /dev/diskNs2` (macOS) ou
+>    `sudo debugfs -R "cat ssh_authorized_keys" /dev/sdX2` (Linux). Si le
+>    fichier est vide ou absent, relance `sd_setup.sh` avec `--ssh-pubkey`.
+>    Attention : le script **reformate `/data`**, donc tu repars d'une config
+>    vierge et les capteurs sont à ré-appairer. Sur une caméra déjà en
+>    service, préfère écrire la clé directement dans la partition :
+>    `debugfs -w -R "write ~/.ssh/id_ed25519.pub ssh_authorized_keys" /dev/diskNs2`.
+> 2. **Ta clé est au format RSA.** Le dropbear de la caméra ne signe qu'en
+>    `ssh-rsa` (SHA-1), qu'OpenSSH 8.7+ refuse par défaut. Ajoute
+>    `-o PubkeyAcceptedAlgorithms=+ssh-rsa`, ou utilise une clé ed25519 qui
+>    n'a pas ce problème.
 
 ### 5. Patcher fbxhome (recommandé)
 
