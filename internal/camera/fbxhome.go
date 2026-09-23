@@ -620,10 +620,32 @@ func (c *FbxhomeClient) StopSiren(ctx context.Context, sensorID int) error {
 	return nil
 }
 
+// Valeurs de config.sensor.night_day_mode (enum APK « Vision nocturne »).
+const (
+	nightDayModeAuto     = 1
+	nightDayModeForceDay = 2 // IR-cut fixe, LED IR éteinte
+)
+
 // SetShutter opens/closes the shutter via fbxhome endpoints_write.
 // fbxhome uses inverted logic: true=close, false=open.
+//
+// Cache fermé, la LED IR éclaire le cache : BV repasse au-dessus du seuil
+// jour → hlcamd bascule jour → noir → nuit… (clic IR-cut toutes les ~3s).
+// On force donc le mode jour tant que le cache est fermé, auto sinon.
+// hlcamd applique à chaud et persiste dans /data/hlcamd-parameters.json.
 func (c *FbxhomeClient) SetShutter(ctx context.Context, open bool) error {
-	eps := []EndpointWriteEntry{{EPName: "shutter", Value: !open}}
+	mode := nightDayModeForceDay
+	if open {
+		mode = nightDayModeAuto
+	}
+	eps := []EndpointWriteEntry{
+		{EPName: "shutter", Value: !open},
+		{EPName: "video_settings", Value: map[string]any{
+			"parameters": map[string]any{
+				"config.sensor.night_day_mode": map[string]any{"val": mode},
+			},
+		}},
+	}
 	return c.EndpointsWrite(ctx, 3, eps) // node 3 = camera
 }
 

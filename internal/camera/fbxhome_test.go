@@ -505,6 +505,46 @@ func TestTriggerSirenAlarm_OrderAndValues(t *testing.T) {
 	}
 }
 
+// Cache fermé → vision nocturne forcée off (sinon flicker IR-cut), ouvert → auto.
+func TestSetShutter_NightDayMode(t *testing.T) {
+	for _, tc := range []struct {
+		open        bool
+		wantShutter bool
+		wantMode    float64
+	}{
+		{open: false, wantShutter: true, wantMode: nightDayModeForceDay},
+		{open: true, wantShutter: false, wantMode: nightDayModeAuto},
+	} {
+		var got endpointsWriteRequest
+		mux := http.NewServeMux()
+		mux.HandleFunc("/api/v1/home/endpoints_write", func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewDecoder(r.Body).Decode(&got)
+			_, _ = w.Write([]byte(`{"list":[{"node_id":3,"status":[]}]}`))
+		})
+		srv := newTestServer(t, mux)
+		c := newTestClient(t, srv.URL)
+		_ = c.Connect(context.Background())
+
+		if err := c.SetShutter(context.Background(), tc.open); err != nil {
+			t.Fatalf("SetShutter(%v): %v", tc.open, err)
+		}
+		srv.Close()
+
+		eps := got.List[0].Endpoints
+		if got.List[0].NodeID != 3 || len(eps) != 2 || eps[0].EPName != "shutter" || eps[1].EPName != "video_settings" {
+			t.Fatalf("open=%v: unexpected request %+v", tc.open, got)
+		}
+		if v, _ := eps[0].Value.(bool); v != tc.wantShutter {
+			t.Errorf("open=%v: shutter = %v, want %v", tc.open, eps[0].Value, tc.wantShutter)
+		}
+		params := eps[1].Value.(map[string]any)["parameters"].(map[string]any)
+		mode := params["config.sensor.night_day_mode"].(map[string]any)["val"]
+		if mode != tc.wantMode {
+			t.Errorf("open=%v: night_day_mode = %v, want %v", tc.open, mode, tc.wantMode)
+		}
+	}
+}
+
 // Cap supérieur : duration > 63s clampée à 63 (limite radio 255 quarts).
 func TestTriggerSirenAlarm_ClampDuration(t *testing.T) {
 	var got endpointsWriteRequest
