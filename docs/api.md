@@ -155,7 +155,7 @@ Le modèle assume **un seul clavier** :
 | Chemin | `GET` renvoie | `PUT` accepte |
 |---|---|---|
 | `/api/v1/config` | agrégat de tout + `camera_mode` | — (lecture seule) |
-| `/api/v1/config/mqtt` | idem, `password` masqué | `{broker, username?, password?, topic_prefix?}` |
+| `/api/v1/config/mqtt` | idem, `password` masqué, `tls_*` en lecture seule | `{broker, username?, password?, topic_prefix?}` |
 | `/api/v1/config/homekit` | idem, `pin` masqué | `{enabled, pin?, name?, camera?}` |
 | `/api/v1/config/admin` | `{password_set}` — **jamais** le mot de passe ni son hash | `{password}` |
 | `/api/v1/config/alarm` | idem | `{mode?, alarmo_command_topic?, alarmo_state_topic?, siren_sounds?, arming_delay_seconds?, pending_delay_seconds?, wail_duration_seconds?}` |
@@ -165,7 +165,9 @@ Le modèle assume **un seul clavier** :
 Contraintes validées côté serveur (`400` sinon) :
 
 - `broker` — schéma parmi `tcp`, `ssl`, `tls`, `mqtt`, `mqtts`, `ws`, `wss`
-  (ou aucun), hôte non vide, port numérique dans `1..65535`.
+  (ou aucun), hôte non vide, port numérique dans `1..65535`. Schéma TLS
+  obligatoire si des `tls_*` sont configurés (fichier uniquement, cf.
+  [mqtt.md](mqtt.md)).
 - `pin` HomeKit — 8 chiffres, codes triviaux refusés (Apple les rejette de
   toute façon à l'appairage).
 - `password` admin — 8 caractères minimum, ou chaîne vide pour **désactiver

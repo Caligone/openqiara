@@ -17,6 +17,11 @@ Ce qui est considéré _hors périmètre_ aujourd'hui :
   l'alarme, redémarrer la caméra, ou (avec le flag `-debug`) envoyer des
   paquets bruts au MCU.
 
+Le trafic MQTT peut être **chiffré (TLS/mTLS)** contre l'écoute et
+l'usurpation sur le LAN : utiliser un schéma de broker `ssl://` et les
+options `tls_*`. Configuration par fichier uniquement — voir
+[`docs/mqtt.md`](docs/mqtt.md) § « TLS / mTLS ».
+
 Ce qui est considéré _dans périmètre_ :
 
 - Les credentials du repo (clés vendor, etc.) — il n'y en a aucun par

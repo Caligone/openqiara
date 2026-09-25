@@ -15,6 +15,51 @@
 
 Si `broker` est vide, MQTT est désactivé et openqiarad tourne sans.
 
+### TLS / mTLS
+
+Pour chiffrer la connexion au broker, utiliser un schéma `ssl://` (ou `tls://`,
+`mqtts://`) et le port TLS du broker (typiquement `8883`) :
+
+```json
+{
+  "mqtt": {
+    "broker": "ssl://192.168.1.42:8883",
+    "username": "openqiara",
+    "password": "openqiara123",
+    "tls_ca_cert": "/data/mqtt/ca.pem",
+    "tls_client_cert": "/data/mqtt/client.pem",
+    "tls_client_key": "/data/mqtt/client.key",
+    "tls_insecure": false
+  }
+}
+```
+
+- `tls_ca_cert` : chemin d'un bundle CA (PEM) pour valider le certificat du
+  broker. Indispensable pour un broker auto-signé ou à CA privée (Mosquitto
+  local). Absent → CA système, qui n'existent probablement pas sur la
+  caméra : en pratique, à renseigner.
+- `tls_client_cert` / `tls_client_key` : activent le **mTLS** (authentification
+  par certificat client). Les deux sont requis ensemble.
+- `tls_insecure` : désactive la vérification du certificat. **Test uniquement**,
+  jamais en production.
+
+Un fichier de certificat illisible ou invalide fait **échouer** le démarrage du
+publisher MQTT (log `ERROR`) au lieu de retomber silencieusement en clair. Les
+champs TLS ne sont lus qu'au démarrage : un redémarrage d'openqiarad est requis
+pour les appliquer.
+
+**Configuration par fichier uniquement.** Les champs `tls_*` se règlent dans
+`openqiara.json` (avec les certificats sur le disque), **pas** via la web UI ni
+l'API : le handler `PUT /api/v1/config/mqtt` les ignore, ce qui évite qu'un
+formulaire web efface la configuration TLS ou repointe les certificats.
+
+**Cohérence schéma/TLS.** Si un champ `tls_*` est renseigné mais que le broker
+n'utilise pas un schéma TLS (`ssl://`, `tls://`, `mqtts://`, `mqtt+ssl://`,
+`tcps://`, `wss://`), le publisher MQTT **ne démarre pas** (log `ERROR`, le reste
+d'openqiarad tourne) au lieu de se connecter en clair — paho ignorerait sinon la
+configuration TLS silencieusement. Pour la même raison, `PUT /api/v1/config/mqtt`
+refuse (`400`) un broker sans schéma TLS quand des `tls_*` sont configurés.
+
 ## Auto-discovery HA
 
 OpenQiara publie des configs auto-discovery sur les topics `homeassistant/...` au démarrage.

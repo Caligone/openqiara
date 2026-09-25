@@ -9,10 +9,16 @@ import (
 
 // Config holds MQTT broker connection settings.
 type Config struct {
-	Broker      string `json:"broker"`       // e.g. "tcp://192.168.1.42:1883"
+	Broker      string `json:"broker"` // e.g. "tcp://192.168.1.42:1883" or "ssl://192.168.1.42:8883"
 	Username    string `json:"username"`
 	Password    string `json:"password"`
 	TopicPrefix string `json:"topic_prefix"` // default: "openqiara"
+
+	// TLS options, applied when the broker scheme is ssl:// (tls://, mqtts://).
+	TLSCACert     string `json:"tls_ca_cert"`     // PEM CA bundle to trust the broker cert
+	TLSClientCert string `json:"tls_client_cert"` // client cert for mutual TLS
+	TLSClientKey  string `json:"tls_client_key"`  // client key for mutual TLS
+	TLSInsecure   bool   `json:"tls_insecure"`    // skip cert verification (test only)
 }
 
 // Publisher sends sensor states and discovery messages to MQTT.

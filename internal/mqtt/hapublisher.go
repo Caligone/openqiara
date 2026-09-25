@@ -123,6 +123,16 @@ func (p *HAPublisher) Connect(ctx context.Context, cfg Config, sensors []camera.
 		opts.SetPassword(cfg.Password)
 	}
 
+	// TLS: applied by paho only when the broker scheme is ssl://. A cert error
+	// fails Connect instead of silently downgrading to plaintext.
+	tlsCfg, err := buildTLSConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("mqtt tls config: %w", err)
+	}
+	if tlsCfg != nil {
+		opts.SetTLSConfig(tlsCfg)
+	}
+
 	p.client = mqtt.NewClient(opts)
 	// Non-blocking: don't fail Start if the broker is unreachable at boot.
 	// paho reconnects in the background and OnConnectHandler publishes discovery.

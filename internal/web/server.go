@@ -20,6 +20,7 @@ import (
 	"github.com/caligone/openqiara/internal/camera"
 	"github.com/caligone/openqiara/internal/config"
 	"github.com/caligone/openqiara/internal/hlevents"
+	"github.com/caligone/openqiara/internal/mqtt"
 	"github.com/caligone/openqiara/internal/ota"
 )
 
@@ -1186,13 +1187,28 @@ func (s *Server) handleUpdateAdmin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUpdateMQTT(w http.ResponseWriter, r *http.Request) {
-	var body config.MQTTConfig
+	// TLS is an advanced, file-only setting: the tls_* fields are deliberately
+	// absent here so this handler can never touch them. It leaves the
+	// file-configured TLS setup untouched (no partial-PUT wipe possible) and
+	// keeps certificate paths out of reach of the web API.
+	var body struct {
+		Broker      string `json:"broker"`
+		Username    string `json:"username"`
+		Password    string `json:"password"`
+		TopicPrefix string `json:"topic_prefix"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, "JSON invalide")
 		return
 	}
 	if err := validateBrokerURL(body.Broker); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// With file-configured TLS, a plaintext broker would make the MQTT
+	// publisher fail at next boot: refuse it here, where the user sees it.
+	if body.Broker != "" && s.store.Get().MQTT.HasTLS() && !mqtt.IsTLSScheme(body.Broker) {
+		writeErr(w, http.StatusBadRequest, "broker invalide : TLS configuré par fichier, schéma TLS requis (ssl://, mqtts://…)")
 		return
 	}
 

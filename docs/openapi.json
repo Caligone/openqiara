@@ -2413,16 +2413,17 @@
       },
       "MQTTConfig": {
         "type": "object",
-        "description": "Connexion au broker MQTT. Les secrets sont renvoyés masqués (`********`). Réécrire cette valeur telle quelle laisse le secret stocké intact, ce qui permet de relire la configuration et de la sauvegarder sans effacer ce qu'on n'a pas vu.\n\nLe broker n'est lu qu'au démarrage : une modification exige un redémarrage.",
+        "description": "Connexion au broker MQTT. Les secrets sont renvoyés masqués (`********`). Réécrire cette valeur telle quelle laisse le secret stocké intact, ce qui permet de relire la configuration et de la sauvegarder sans effacer ce qu'on n'a pas vu.\n\nLe broker n'est lu qu'au démarrage : une modification exige un redémarrage.\n\nLes champs `tls_*` sont en lecture seule ici : le TLS est une option avancée qui se configure uniquement par fichier (`openqiara.json` + certificats sur le disque), jamais via l'API d'écriture. Ils ne prennent effet que si le broker utilise un schéma TLS (`ssl://`, `tls://`, `mqtts://`) ; sinon le publisher MQTT ne démarre pas plutôt que de se connecter en clair.",
         "required": [
           "broker"
         ],
         "properties": {
           "broker": {
             "type": "string",
-            "description": "Adresse du broker. Le schéma est optionnel (`tcp` par défaut) et le port vaut 1883 s'il est omis.",
+            "description": "Adresse du broker. Le schéma est optionnel (`tcp` par défaut) et le port vaut 1883 s'il est omis. Utiliser un schéma TLS (`ssl://`, port 8883 par convention) pour chiffrer la connexion.",
             "examples": [
               "tcp://192.0.2.10:1883",
+              "ssl://192.0.2.10:8883",
               "homeassistant.local"
             ]
           },
@@ -2441,18 +2442,43 @@
             "type": "string",
             "description": "Préfixe des topics publiés.",
             "default": "openqiara"
+          },
+          "tls_ca_cert": {
+            "type": "string",
+            "readOnly": true,
+            "description": "Chemin d'un bundle CA au format PEM pour valider le certificat du broker (nécessaire pour un broker auto-signé ou à CA privée, ex. un Mosquitto local). Configuration par fichier uniquement.",
+            "examples": [
+              "/data/mqtt/ca.pem"
+            ]
+          },
+          "tls_client_cert": {
+            "type": "string",
+            "readOnly": true,
+            "description": "Chemin du certificat client PEM pour le TLS mutuel (mTLS). À utiliser avec `tls_client_key`. Configuration par fichier uniquement."
+          },
+          "tls_client_key": {
+            "type": "string",
+            "readOnly": true,
+            "description": "Chemin de la clé privée client PEM pour le TLS mutuel (mTLS). À utiliser avec `tls_client_cert`. Configuration par fichier uniquement."
+          },
+          "tls_insecure": {
+            "type": "boolean",
+            "readOnly": true,
+            "description": "Désactive la vérification du certificat du broker. Pour test uniquement, jamais en production. Configuration par fichier uniquement.",
+            "default": false
           }
         }
       },
       "MQTTConfigUpdate": {
         "type": "object",
-        "description": "Réglages MQTT à écrire. Les champs absents ou vides restent inchangés ; renvoyer le mot de passe masqué le laisse intact.",
+        "description": "Réglages MQTT à écrire. Les champs absents ou vides restent inchangés ; renvoyer le mot de passe masqué le laisse intact.\n\nLe TLS ne se configure pas ici : les champs `tls_*` sont volontairement absents de ce schéma et ignorés s'ils sont envoyés. Le TLS est une option avancée par fichier (`openqiara.json` + certificats sur le disque) — voir `docs/mqtt.md`. Si des `tls_*` sont configurés, un `broker` sans schéma TLS est refusé (`400`).",
         "properties": {
           "broker": {
             "type": "string",
-            "description": "Adresse du broker. Le schéma est optionnel (`tcp` par défaut) et le port vaut 1883 s'il est omis.",
+            "description": "Adresse du broker. Le schéma est optionnel (`tcp` par défaut) et le port vaut 1883 s'il est omis. Utiliser un schéma TLS (`ssl://`, port 8883 par convention) pour chiffrer la connexion.",
             "examples": [
               "tcp://192.0.2.10:1883",
+              "ssl://192.0.2.10:8883",
               "homeassistant.local"
             ]
           },

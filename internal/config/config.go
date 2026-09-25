@@ -180,6 +180,22 @@ type MQTTConfig struct {
 	Username    string `json:"username,omitempty"`
 	Password    string `json:"password,omitempty"`
 	TopicPrefix string `json:"topic_prefix,omitempty"`
+
+	// TLS options, used when Broker has an ssl:// (or tls://, mqtts://) scheme.
+	// TLSCACert is a PEM CA bundle path to trust the broker certificate (needed
+	// for a self-signed or private-CA broker such as a local Mosquitto).
+	// TLSClientCert/TLSClientKey enable mutual TLS (client certificate auth).
+	// TLSInsecure disables certificate verification — test only, never for a
+	// real deployment.
+	TLSCACert     string `json:"tls_ca_cert,omitempty"`
+	TLSClientCert string `json:"tls_client_cert,omitempty"`
+	TLSClientKey  string `json:"tls_client_key,omitempty"`
+	TLSInsecure   bool   `json:"tls_insecure,omitempty"`
+}
+
+// HasTLS reports whether any file-configured TLS option is set.
+func (m MQTTConfig) HasTLS() bool {
+	return m.TLSCACert != "" || m.TLSClientCert != "" || m.TLSClientKey != "" || m.TLSInsecure
 }
 
 // AdminConfig holds web UI admin credentials.

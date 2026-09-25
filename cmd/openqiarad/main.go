@@ -180,10 +180,14 @@ func main() {
 	mqttConnected := func() bool { return mqttPub != nil && mqttPub.IsConnected() }
 	if cfg.MQTT.Broker != "" {
 		mqttCfg := mqtt.Config{
-			Broker:      cfg.MQTT.Broker,
-			Username:    cfg.MQTT.Username,
-			Password:    cfg.MQTT.Password,
-			TopicPrefix: cfg.MQTT.TopicPrefix,
+			Broker:        cfg.MQTT.Broker,
+			Username:      cfg.MQTT.Username,
+			Password:      cfg.MQTT.Password,
+			TopicPrefix:   cfg.MQTT.TopicPrefix,
+			TLSCACert:     cfg.MQTT.TLSCACert,
+			TLSClientCert: cfg.MQTT.TLSClientCert,
+			TLSClientKey:  cfg.MQTT.TLSClientKey,
+			TLSInsecure:   cfg.MQTT.TLSInsecure,
 		}
 		if mqttCfg.TopicPrefix == "" {
 			mqttCfg.TopicPrefix = "openqiara"
