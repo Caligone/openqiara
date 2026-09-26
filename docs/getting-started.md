@@ -124,6 +124,10 @@ ssh root@$CAM_HOST reboot
 ssh root@$CAM_HOST 'pidof openqiarad && echo OK'
 ```
 
+> Par défaut la caméra fait confiance à tout le LAN. Pour n'autoriser que
+> certaines machines (Home Assistant, poste d'admin), voir
+> [`install.md` § Restreindre l'accès réseau](install.md#restreindre-lacces-reseau-pare-feu).
+
 ---
 
 ## Étape 5 — Ouvrir la web UI

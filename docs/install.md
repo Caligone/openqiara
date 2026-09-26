@@ -123,6 +123,57 @@ dd if=/dev/mmcblk0p1 | gzip > /data/rootfs_backup.gz
 ssh root@<IP> 'cat /data/rootfs_backup.gz' > ./rootfs_backup_patched.gz
 ```
 
+## Restreindre l'accès réseau (pare-feu)
+
+Par défaut, la caméra fait confiance à tout le LAN et ouvre tous ses ports
+(cf. [`SECURITY.md`](../SECURITY.md)) : n'importe quel appareil du réseau peut
+atteindre la web UI (`:80`, armer/désarmer/reboot/config) et le flux RTSP
+(`:8554`). Pour n'autoriser que certaines machines, dépose une **allowlist** dans
+`/data/firewall_allow` : une adresse IPv4 ou un CIDR par ligne (les lignes vides
+et les commentaires `#` sont ignorés).
+
+Comportement de `camera_boot.sh` au boot :
+
+- **Fichier absent ou vide** → tout le LAN est autorisé (comportement par défaut,
+  inchangé).
+- **Au moins une entrée** → seules ces sources joignent la caméra en **TCP**. Le
+  SSH (`:22`) reste toujours ouvert (filet anti-lockout si l'allowlist est
+  erronée), et l'**UDP est laissé ouvert** volontairement : les surfaces
+  sensibles sont toutes en TCP, alors que bloquer l'UDP entrant casserait le
+  renouvellement de bail DHCP (perte d'IP) et le flux RTP.
+
+### Au flash (offline)
+
+Le script [`sd_setup.sh`](../scripts/sd_setup.sh) accepte `--firewall-allow`, une
+liste d'IP/CIDR séparées par des virgules :
+
+```bash
+./scripts/sd_setup.sh --disk disk4 --wifi-ssid "MonWiFi" --wifi-pass "…" \
+    --ssh-pubkey ~/.ssh/id_ed25519.pub \
+    --firewall-allow 192.168.1.10,192.168.1.20
+```
+
+### Sur une caméra déjà installée (sans re-flash)
+
+Crée ou édite le fichier en SSH, puis reboote (ou relance `/data/boot.sh`) pour
+appliquer les règles :
+
+```bash
+ssh -i ~/.ssh/id_ed25519 root@<IP_CAMERA>
+cat > /data/firewall_allow << 'EOF'
+# Home Assistant
+192.168.1.10
+# Poste d'admin
+192.168.1.20
+EOF
+reboot
+```
+
+> ⚠️ Teste toujours depuis une machine **hors** allowlist qu'elle est bien
+> bloquée sur `:80`, et depuis une machine **dans** l'allowlist qu'elle passe,
+> avant de te fier au pare-feu. En cas d'erreur, le SSH reste ouvert pour
+> corriger `/data/firewall_allow`.
+
 ## Changer de réseau WiFi
 
 ```bash

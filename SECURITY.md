@@ -45,7 +45,10 @@ listées ici pour référence :
 - `/events` (push fbxhome → openqiarad) accessible sans auth
 - Endpoints `/api/v1/commands/debug/pkt` et `/api/v1/commands/debug/siren/sequence` activables
   via `-debug` — peuvent brick le MCU (opcodes `0x03`, `0x08`)
-- Le boot script ouvre tous les ports en INPUT (politique ACCEPT all)
+- Le boot script ouvre tous les ports en INPUT **par défaut** (politique ACCEPT
+  all). Ça peut être restreint à une allowlist d'IP/CIDR via
+  `/data/firewall_allow` (voir [`docs/install.md`](docs/install.md) § « Restreindre
+  l'accès réseau ») ; sans ce fichier, tout le LAN reste autorisé.
 
 Le durcissement est planifié mais ne doit pas être considéré comme acquis.
 

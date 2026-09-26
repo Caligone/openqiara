@@ -10,12 +10,15 @@
 #   ./scripts/sd_setup.sh --disk disk4 --wifi-ssid "MyNetwork" --wifi-pass "MyPassword"
 #
 # Options:
-#   --disk         macOS disk identifier (e.g. disk4) — REQUIRED
-#   --wifi-ssid    WiFi network name — REQUIRED
-#   --wifi-pass    WiFi password — REQUIRED
-#   --daemon       Path to openqiarad binary (default: bin/openqiarad)
-#   --ssh-pubkey   Path to SSH public key to authorize (optional)
-#   --dry-run      Show what would be done without writing
+#   --disk            macOS disk identifier (e.g. disk4) — REQUIRED
+#   --wifi-ssid       WiFi network name — REQUIRED
+#   --wifi-pass       WiFi password — REQUIRED
+#   --daemon          Path to openqiarad binary (default: bin/openqiarad)
+#   --ssh-pubkey      Path to SSH public key to authorize (optional)
+#   --firewall-allow  Comma-separated IPv4 addresses/CIDRs allowed to reach the
+#                     camera (e.g. 192.168.1.10,192.168.1.0/24). Without it, the
+#                     camera trusts the whole LAN.
+#   --dry-run         Show what would be done without writing
 
 set -euo pipefail
 
@@ -26,6 +29,7 @@ WIFI_SSID=""
 WIFI_PASS=""
 DAEMON_BIN="${REPO_ROOT}/bin/openqiarad"
 SSH_PUBKEY=""
+FIREWALL_ALLOW=()
 DRY_RUN=false
 
 # e2fsprogs tools (Homebrew puts them in sbin, not in PATH)
@@ -42,6 +46,17 @@ while [[ $# -gt 0 ]]; do
         --wifi-pass)  WIFI_PASS="$2"; shift 2;;
         --daemon)     DAEMON_BIN="$2"; shift 2;;
         --ssh-pubkey) SSH_PUBKEY="$2"; shift 2;;
+        --firewall-allow)
+            # Comma-separated list of IPs/CIDRs. Each entry lands on its own line
+            # in /data/firewall_allow (iptables needs one -s rule per source and
+            # the file stays comment-friendly). Empty tokens (a,,b or trailing
+            # comma) are dropped.
+            FIREWALL_ALLOW=()
+            IFS=',' read -ra _fw <<< "$2"
+            for _e in "${_fw[@]}"; do
+                [ -n "$_e" ] && FIREWALL_ALLOW+=("$_e")
+            done
+            shift 2;;
         --dry-run)    DRY_RUN=true; shift;;
         *) echo "Unknown option: $1"; exit 1;;
     esac
@@ -106,6 +121,22 @@ for pair in "WIFI_SSID:--wifi-ssid" "WIFI_PASS:--wifi-pass"; do
     esac
 done
 
+# Validate each --firewall-allow entry as an IPv4 address or CIDR. camera_boot.sh
+# feeds these verbatim to `iptables -s`, so a malformed value would make the boot
+# firewall rule fail and, worse, silently leave that source unauthorized. Catch
+# it at flash time instead. IPv4-only: the camera has no global IPv6.
+# The count guard is required: under `set -u`, bash 3.2 (macOS default) errors on
+# "${arr[@]}" when the array is empty.
+if [ ${#FIREWALL_ALLOW[@]} -gt 0 ]; then
+    for entry in "${FIREWALL_ALLOW[@]}"; do
+        if ! [[ "$entry" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]{1,2})?$ ]]; then
+            echo "ERROR: --firewall-allow '$entry' is not an IPv4 address or CIDR"
+            echo "Example: --firewall-allow 192.168.1.20 --firewall-allow 192.168.1.0/24"
+            exit 1
+        fi
+    done
+fi
+
 PART_ROOTFS="/dev/${DISK}s1"
 PART_DATA="/dev/${DISK}s2"
 
@@ -162,6 +193,11 @@ echo "Disk:       /dev/$DISK"
 echo "WiFi SSID:  $WIFI_SSID"
 echo "Daemon:     $DAEMON_BIN ($(du -h "$DAEMON_BIN" | cut -f1))"
 [ -n "$SSH_PUBKEY" ] && echo "SSH key:    $SSH_PUBKEY"
+if [ ${#FIREWALL_ALLOW[@]} -gt 0 ]; then
+    echo "Firewall:   allow ${FIREWALL_ALLOW[*]} (LAN otherwise blocked)"
+else
+    echo "Firewall:   open to whole LAN (no --firewall-allow)"
+fi
 echo ""
 
 if [ "$DRY_RUN" = true ]; then
@@ -264,6 +300,13 @@ printf '%s' "$WIFI_PASS" > "$TMPDIR/wifi_pass"
 # Write bridge marker
 touch "$TMPDIR/bridge"
 
+# Write the firewall allowlist (one entry per line) when provided. camera_boot.sh
+# reads /data/firewall_allow at boot and restricts INPUT to these sources; absent
+# or empty, it keeps the whole-LAN-open default.
+if [ ${#FIREWALL_ALLOW[@]} -gt 0 ]; then
+    printf '%s\n' "${FIREWALL_ALLOW[@]}" > "$TMPDIR/firewall_allow"
+fi
+
 # Write boot.sh from scripts/camera_boot.sh (single source of truth).
 write_boot_sh "$TMPDIR/boot.sh"
 chmod +x "$TMPDIR/boot.sh"
@@ -283,6 +326,11 @@ if [ -n "$SSH_PUBKEY" ]; then
     DEBUGFS_CMDS+="write $SSH_PUBKEY ssh_authorized_keys\n"
 fi
 
+# Firewall allowlist
+if [ ${#FIREWALL_ALLOW[@]} -gt 0 ]; then
+    DEBUGFS_CMDS+="write $TMPDIR/firewall_allow firewall_allow\n"
+fi
+
 echo -e "$DEBUGFS_CMDS" | $DEBUGFS -w "$PART_DATA" 2>/dev/null
 echo "  openqiarad ✓"
 echo "  boot.sh ✓"
@@ -290,6 +338,7 @@ echo "  wifi_ssid ✓"
 echo "  wifi_pass ✓"
 echo "  bridge ✓"
 [ -n "$SSH_PUBKEY" ] && echo "  ssh_authorized_keys ✓"
+[ ${#FIREWALL_ALLOW[@]} -gt 0 ] && echo "  firewall_allow ✓"
 
 # --- Step 3: Verify ---
 echo ""
@@ -297,7 +346,9 @@ echo "[3/3] Verifying..."
 
 # Verify files exist on data partition
 VERIFY=$($DEBUGFS -R "ls -l" "$PART_DATA" 2>/dev/null)
-for f in openqiarad boot.sh wifi_ssid wifi_pass bridge; do
+VERIFY_FILES="openqiarad boot.sh wifi_ssid wifi_pass bridge"
+[ ${#FIREWALL_ALLOW[@]} -gt 0 ] && VERIFY_FILES="$VERIFY_FILES firewall_allow"
+for f in $VERIFY_FILES; do
     if echo "$VERIFY" | grep -q "$f"; then
         echo "  /data/$f ✓"
     else

@@ -71,9 +71,32 @@ if [ -f /data/ssh_authorized_keys ]; then
     mount -o remount,ro /
 fi
 
-# Open all TCP/UDP ports (IPv4 + IPv6)
-iptables -I INPUT 3 -p tcp -j ACCEPT
-iptables -I INPUT 3 -p udp -j ACCEPT
+# Firewall (IPv4 INPUT). By default OpenQiara trusts the whole LAN (see
+# SECURITY.md) and opens every port. To restrict access, drop an allowlist in
+# /data/firewall_allow: one IPv4 address or CIDR per line (# comments and blank
+# lines ignored). With at least one entry, only those sources reach the camera
+# over TCP (Web UI :80, RTSP :8554, config/arm/disarm) — the stock INPUT policy
+# is DROP, so removing the blanket TCP ACCEPT below is what closes the door.
+# SSH :22 is always accepted so a wrong allowlist can never lock the operator
+# out. UDP is left open on purpose: the sensitive control surfaces are all TCP,
+# whereas dropping inbound UDP breaks DHCP lease renewal (udp/68 → the camera
+# loses its IP) and RTP video, for no real gain. IPv6 is left as-is (no global
+# IPv6; link-local only).
+FW_ALLOW=/data/firewall_allow
+FW_ENTRIES=""
+if [ -f "$FW_ALLOW" ]; then
+    FW_ENTRIES=$(sed -e 's/#.*//' -e 's/[[:space:]]//g' "$FW_ALLOW" | grep -v '^$')
+fi
+if [ -n "$FW_ENTRIES" ]; then
+    iptables -I INPUT 3 -p udp -j ACCEPT
+    iptables -I INPUT 3 -p tcp --dport 22 -j ACCEPT
+    for src in $FW_ENTRIES; do
+        iptables -I INPUT 3 -s "$src" -j ACCEPT
+    done
+else
+    iptables -I INPUT 3 -p tcp -j ACCEPT
+    iptables -I INPUT 3 -p udp -j ACCEPT
+fi
 ip6tables -I INPUT 1 -p tcp -j ACCEPT 2>/dev/null
 ip6tables -I INPUT 1 -p udp -j ACCEPT 2>/dev/null
 
