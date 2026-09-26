@@ -256,15 +256,6 @@ a { color: var(--primary); }
 
       <hr style="border:none;border-top:1px solid var(--border);margin:20px 0">
 
-      <!-- Sécurité -->
-      <div class="card-title" style="margin-bottom:12px">Sécurité</div>
-      <div class="form-group">
-        <label>Mot de passe admin <span id="cfg-admin-status" style="color:var(--text-muted);font-size:12px"></span></label>
-        <input type="password" id="cfg-admin-password" placeholder="(laisser vide pour désactiver)" autocomplete="new-password">
-      </div>
-
-      <hr style="border:none;border-top:1px solid var(--border);margin:20px 0">
-
       <!-- Avancé (plié par défaut) -->
       <div style="cursor:pointer;display:flex;align-items:center;gap:6px;margin-bottom:12px" id="cfg-advanced-toggle">
         <span id="cfg-advanced-arrow" style="transition:transform 0.2s">▶</span>
@@ -343,6 +334,20 @@ a { color: var(--primary); }
       <!-- Un seul bouton Enregistrer -->
       <button class="btn btn-primary" id="cfg-save-all" style="margin-top:16px">Enregistrer</button>
       <div id="cfg-msg"></div>
+
+      <!-- Sécurité : action à part, jamais envoyée par « Enregistrer » (#45) -->
+      <div style="font-weight:600;font-size:14px;margin:24px 0 8px;border-top:1px solid var(--border);padding-top:16px">Sécurité <span id="cfg-admin-status" style="color:var(--text-muted);font-size:12px;font-weight:normal"></span></div>
+      <div class="form-group">
+        <label>Nouveau mot de passe admin</label>
+        <input type="password" id="cfg-admin-password" placeholder="8 caractères minimum" autocomplete="new-password">
+      </div>
+      <div class="form-group">
+        <label>Confirmation</label>
+        <input type="password" id="cfg-admin-confirm" autocomplete="new-password">
+      </div>
+      <button class="btn btn-primary" onclick="changeAdminPassword()">Changer le mot de passe</button>
+      <button class="btn btn-danger" id="cfg-admin-disable" style="display:none" onclick="disableAdminAuth()">Désactiver l'authentification</button>
+      <div id="cfg-admin-msg"></div>
 
       <!-- Système -->
       <div style="font-weight:600;font-size:14px;margin:24px 0 8px;border-top:1px solid var(--border);padding-top:16px">Système</div>
@@ -809,6 +814,7 @@ async function loadConfig() {
     const adminStatus = document.getElementById('cfg-admin-status');
     if (adminStatus) {
       adminStatus.textContent = d.admin && d.admin.password_set ? '— authentification activée' : '— authentification désactivée';
+      document.getElementById('cfg-admin-disable').style.display = d.admin && d.admin.password_set ? '' : 'none';
     }
     // Alarm
     if (d.alarm) {
@@ -910,7 +916,6 @@ document.getElementById('cfg-save-all').addEventListener('click', async () => {
   if (!webEnabled && !confirm('Désactiver l\'interface web ? Vous ne pourrez plus y accéder après redémarrage.')) {
     return;
   }
-  const adminPwd = document.getElementById('cfg-admin-password').value;
 
   const calls = [];
 
@@ -975,14 +980,6 @@ document.getElementById('cfg-save-all').addEventListener('click', async () => {
     body: JSON.stringify({enabled: webEnabled})
   }));
 
-  // Admin (seulement si le champ est rempli)
-  if (adminPwd !== undefined) {
-    calls.push(fetch(V1 + '/config/admin', {
-      method: 'PUT', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({password: adminPwd})
-    }));
-  }
-
   try {
     const results = await Promise.all(calls);
     let rebootRequired = false;
@@ -996,7 +993,6 @@ document.getElementById('cfg-save-all').addEventListener('click', async () => {
       ? 'Configuration sauvegardée. Redémarrez pour appliquer le broker MQTT.'
       : 'Configuration sauvegardée.';
     window.currentAlarmMode = document.getElementById('cfg-alarm-mode').value;
-    document.getElementById('cfg-admin-password').value = '';
     fetchSensors();
   } catch (e) {
     msg.className = 'msg error';
@@ -1117,6 +1113,35 @@ async function checkForUpdate() {
   } catch (e) {
     // Silencieux : pas de réseau, pas grave.
   }
+}
+
+async function changeAdminPassword() {
+  const msg = document.getElementById('cfg-admin-msg');
+  const pwd = document.getElementById('cfg-admin-password').value;
+  if (pwd !== document.getElementById('cfg-admin-confirm').value) {
+    msg.className = 'msg error'; msg.textContent = 'Les deux mots de passe diffèrent.';
+    return;
+  }
+  const r = await fetch(V1 + '/config/admin', {
+    method: 'PUT', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({password: pwd})
+  });
+  const d = await r.json();
+  if (d.error) { msg.className = 'msg error'; msg.textContent = d.error; return; }
+  // Le navigateur garde l'ancien mot de passe en cache : on recharge pour
+  // déclencher volontairement la demande d'identifiants.
+  alert('Mot de passe changé. Reconnectez-vous avec l\'utilisateur « admin » et le nouveau mot de passe.');
+  location.reload();
+}
+
+async function disableAdminAuth() {
+  if (!confirm('Désactiver l\'authentification ? L\'interface et l\'API (y compris le pilotage de l\'alarme) seront ouvertes à quiconque atteint la caméra.')) return;
+  const msg = document.getElementById('cfg-admin-msg');
+  const r = await fetch(V1 + '/config/admin', { method: 'DELETE' });
+  const d = await r.json();
+  if (d.error) { msg.className = 'msg error'; msg.textContent = d.error; return; }
+  msg.className = 'msg success'; msg.textContent = 'Authentification désactivée.';
+  loadConfig();
 }
 
 async function rebootCamera() {

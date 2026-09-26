@@ -49,8 +49,9 @@ Deux exceptions volontaires, **hors versionnage et hors contrat** :
 ## Authentification
 
 HTTP Basic, utilisateur fixe `admin`, mot de passe défini via
-`PUT /api/v1/config/admin`. **Tant qu'aucun mot de passe n'est configuré,
-l'API est ouverte** — y compris les commandes qui pilotent le matériel.
+`PUT /api/v1/config/admin` et supprimé via `DELETE /api/v1/config/admin`.
+**Tant qu'aucun mot de passe n'est configuré, l'API est ouverte** — y compris
+les commandes qui pilotent le matériel.
 
 ```console
 $ curl -u admin:motdepasse http://camera/api/v1/status
@@ -157,7 +158,7 @@ Le modèle assume **un seul clavier** :
 | `/api/v1/config` | agrégat de tout + `camera_mode` | — (lecture seule) |
 | `/api/v1/config/mqtt` | idem, `password` masqué, `tls_*` en lecture seule | `{broker, username?, password?, topic_prefix?}` |
 | `/api/v1/config/homekit` | idem, `pin` masqué | `{enabled, pin?, name?, camera?}` |
-| `/api/v1/config/admin` | `{password_set}` — **jamais** le mot de passe ni son hash | `{password}` |
+| `/api/v1/config/admin` | `{password_set}` — **jamais** le mot de passe ni son hash | `{password}` (8 caractères min., vide refusé) — `DELETE` désactive l'auth |
 | `/api/v1/config/alarm` | idem | `{mode?, alarmo_command_topic?, alarmo_state_topic?, siren_sounds?, arming_delay_seconds?, pending_delay_seconds?, wail_duration_seconds?}` |
 | `/api/v1/config/web` | `{enabled}` | `{enabled}` |
 | `/api/v1/config/fbxhome_alarm` | idem | `{timeout_before_armed, timeout_before_alert, timeout_alert, history_when_armed}` |
