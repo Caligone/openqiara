@@ -1139,7 +1139,7 @@
         ],
         "summary": "Modifier l'authentification",
         "operationId": "updateAdminConfig",
-        "description": "Le mot de passe est stocké haché. Une chaîne vide désactive l'authentification et ouvre l'API à quiconque atteint la caméra.",
+        "description": "Le mot de passe est stocké haché. Pour désactiver l'authentification, utiliser `DELETE` : une chaîne vide est refusée.",
         "requestBody": {
           "required": true,
           "content": {
@@ -1167,6 +1167,42 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "description": "Échec de la sauvegarde.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Configuration"
+        ],
+        "summary": "Désactiver l'authentification",
+        "operationId": "deleteAdminConfig",
+        "description": "Supprime le mot de passe : l'API devient ouverte à quiconque atteint la caméra, y compris les commandes qui pilotent l'alarme.",
+        "responses": {
+          "200": {
+            "description": "Authentification désactivée.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminUpdateResult"
                 }
               }
             }
@@ -2580,17 +2616,18 @@
       },
       "AdminUpdate": {
         "type": "object",
-        "description": "Définit le mot de passe d'administration. Une chaîne vide désactive l'authentification.",
+        "description": "Définit le mot de passe d'administration. Pour désactiver l'authentification, voir `DELETE /api/v1/config/admin`.",
         "required": [
           "password"
         ],
         "properties": {
           "password": {
             "type": "string",
-            "description": "8 caractères minimum, ou chaîne vide pour désactiver l'authentification.",
+            "description": "8 caractères minimum.",
             "examples": [
-              ""
-            ]
+              "motdepasse"
+            ],
+            "minLength": 8
           }
         }
       },
@@ -3220,7 +3257,7 @@
       },
       "AdminUpdateResult": {
         "type": "object",
-        "description": "Mot de passe enregistré.",
+        "description": "Authentification mise à jour.",
         "required": [
           "ok",
           "auth_enabled"

@@ -293,6 +293,7 @@ func (s *Server) routes() (*http.ServeMux, error) {
 	mux.HandleFunc("PUT /api/v1/config/homekit", s.cors(s.handleUpdateHomeKit))
 	mux.HandleFunc("GET /api/v1/config/admin", s.cors(s.handleGetAdmin))
 	mux.HandleFunc("PUT /api/v1/config/admin", s.cors(s.handleUpdateAdmin))
+	mux.HandleFunc("DELETE /api/v1/config/admin", s.cors(s.handleDeleteAdmin))
 	mux.HandleFunc("GET /api/v1/config/alarm", s.cors(s.handleGetAlarmConfig))
 	mux.HandleFunc("PUT /api/v1/config/alarm", s.cors(s.handleUpdateAlarm))
 	mux.HandleFunc("GET /api/v1/config/web", s.cors(s.handleGetWeb))
@@ -1142,38 +1143,43 @@ func (s *Server) handleUpdateWeb(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "restart_required": true})
 }
 
+// handleUpdateAdmin définit le mot de passe admin. Désactiver l'auth passe
+// par DELETE : une chaîne vide ici est refusée, pour qu'aucun client ne
+// puisse ouvrir l'API par accident en envoyant un champ vide (#45).
 func (s *Server) handleUpdateAdmin(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Password *string `json:"password,omitempty"`
+		Password string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, "JSON invalide")
 		return
 	}
-	if body.Password == nil {
-		writeErr(w, http.StatusBadRequest, "champ 'password' requis (vide pour désactiver l'auth)")
-		return
-	}
-	// Chaîne vide = désactivation explicite de l'auth, cas légitime. Mais un
-	// mot de passe trop court donnerait une fausse impression de protection
-	// sur une UI qui pilote une alarme.
-	if *body.Password != "" && len(*body.Password) < minAdminPasswordLen {
+	// Un mot de passe trop court donnerait une fausse impression de
+	// protection sur une UI qui pilote une alarme.
+	if len(body.Password) < minAdminPasswordLen {
 		writeErr(w, http.StatusBadRequest,
-			fmt.Sprintf("mot de passe trop court (%d caractères minimum)", minAdminPasswordLen))
+			fmt.Sprintf("mot de passe trop court (%d caractères minimum) — DELETE pour désactiver l'auth", minAdminPasswordLen))
 		return
 	}
 
-	hash, err := config.HashAdminPassword(*body.Password)
+	hash, err := config.HashAdminPassword(body.Password)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "échec hash: "+err.Error())
 		return
 	}
+	s.setAdminPasswordHash(w, hash)
+}
 
-	err = s.store.Update(func(cfg *config.Config) {
+// handleDeleteAdmin désactive l'authentification : l'API devient ouverte.
+func (s *Server) handleDeleteAdmin(w http.ResponseWriter, r *http.Request) {
+	s.setAdminPasswordHash(w, "")
+}
+
+func (s *Server) setAdminPasswordHash(w http.ResponseWriter, hash string) {
+	err := s.store.Update(func(cfg *config.Config) {
 		cfg.Admin.PasswordHash = hash
-		// Vide systématiquement le champ legacy : si on est en train de
-		// définir un nouveau password, on ne veut surtout pas laisser
-		// l'ancien clair traîner.
+		// Vide systématiquement le champ legacy : on ne veut surtout pas
+		// laisser l'ancien clair traîner.
 		cfg.Admin.Password = ""
 	})
 	if err != nil {
@@ -1181,7 +1187,7 @@ func (s *Server) handleUpdateAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	authEnabled := *body.Password != ""
+	authEnabled := hash != ""
 	s.log.Info("admin password updated", "auth_enabled", authEnabled)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "auth_enabled": authEnabled})
 }
