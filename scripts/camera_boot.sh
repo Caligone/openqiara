@@ -80,8 +80,9 @@ fi
 # SSH :22 is always accepted so a wrong allowlist can never lock the operator
 # out. UDP is left open on purpose: the sensitive control surfaces are all TCP,
 # whereas dropping inbound UDP breaks DHCP lease renewal (udp/68 → the camera
-# loses its IP) and RTP video, for no real gain. IPv6 is left as-is (no global
-# IPv6; link-local only).
+# loses its IP) and RTP video, for no real gain. The kernel has no ip6tables
+# support, so IPv6 cannot be filtered: with an allowlist it is disabled on the
+# WiFi interface instead (see below).
 FW_ALLOW=/data/firewall_allow
 FW_ENTRIES=""
 if [ -f "$FW_ALLOW" ]; then
@@ -97,16 +98,20 @@ else
     iptables -I INPUT 3 -p tcp -j ACCEPT
     iptables -I INPUT 3 -p udp -j ACCEPT
 fi
-ip6tables -I INPUT 1 -p tcp -j ACCEPT 2>/dev/null
-ip6tables -I INPUT 1 -p udp -j ACCEPT 2>/dev/null
 
-# Enable IPv6 on WiFi (needed for HomeKit mDNS)
-# ssv0 may not exist yet at this point — retry briefly
-for i in 1 2 3 4 5; do
-    [ -f /proc/sys/net/ipv6/conf/ssv0/disable_ipv6 ] && break
-    sleep 2
-done
-echo 0 > /proc/sys/net/ipv6/conf/ssv0/disable_ipv6 2>/dev/null
+# IPv6 on WiFi: enabled by default (HomeKit mDNS), but disabled when an
+# allowlist is set, since unfiltered IPv6 would bypass it. openqiarad's mDNS
+# and HomeKit camera paths are IPv4-only, and loopback keeps ::1.
+# ssv0 may appear a few seconds after this point: wait in the background so the
+# setting cannot be skipped by a slow WiFi bring-up.
+if [ -n "$FW_ENTRIES" ]; then IPV6_OFF=1; else IPV6_OFF=0; fi
+(
+    for i in $(seq 1 30); do
+        [ -f /proc/sys/net/ipv6/conf/ssv0/disable_ipv6 ] && break
+        sleep 2
+    done
+    echo "$IPV6_OFF" > /proc/sys/net/ipv6/conf/ssv0/disable_ipv6 2>/dev/null
+) &
 
 # Rotate logs at boot if larger than 2M (single .old backup, no gz to save CPU).
 # /data is only 19.9M; without rotation a flood of PKT raw can fill the

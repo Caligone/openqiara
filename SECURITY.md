@@ -43,7 +43,9 @@ listées ici pour référence :
 - Le boot script ouvre tous les ports en INPUT **par défaut** (politique ACCEPT
   all). Ça peut être restreint à une allowlist d'IP/CIDR via
   `/data/firewall_allow` (voir [`docs/install.md`](docs/install.md) § « Restreindre
-  l'accès réseau ») ; sans ce fichier, tout le LAN reste autorisé.
+  l'accès réseau ») ; sans ce fichier, tout le LAN reste autorisé. Le kernel
+  ne gérant pas `ip6tables`, IPv6 n'est jamais filtré : l'allowlist le
+  désactive donc sur le Wi-Fi.
 
 Le durcissement est planifié mais ne doit pas être considéré comme acquis.
 

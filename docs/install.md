@@ -141,6 +141,10 @@ Comportement de `camera_boot.sh` au boot :
   erronée), et l'**UDP est laissé ouvert** volontairement : les surfaces
   sensibles sont toutes en TCP, alors que bloquer l'UDP entrant casserait le
   renouvellement de bail DHCP (perte d'IP) et le flux RTP.
+- **IPv6 désactivé sur le Wi-Fi** quand l'allowlist est active : le kernel de la
+  caméra ne gère pas `ip6tables`, IPv6 ne peut donc pas être filtré et
+  contournerait l'allowlist via l'adresse link-local. HomeKit n'est pas impacté :
+  le mDNS et le flux vidéo d'openqiarad passent en IPv4.
 
 ### Au flash (offline)
 
