@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/brutella/dnssd"
 	"github.com/brutella/hap"
 	"github.com/brutella/hap/accessory"
 	"github.com/brutella/hap/characteristic"
@@ -66,6 +67,9 @@ type HomeKitPublisher struct {
 	// each server's per-instance context from this so cancelling the
 	// outer context still tears everything down.
 	rootCtx context.Context
+	// responder announces the bridge and the camera on mDNS: one for
+	// both (third_party/hap Server.Responder).
+	responder dnssd.Responder
 
 	// Last known sensor list passed to Start/RebuildBridge. Used to
 	// short-circuit no-op rebuilds (rename, state change).
@@ -120,6 +124,18 @@ func (p *HomeKitPublisher) Start(ctx context.Context, sensors []camera.Sensor, c
 	p.rootCtx = ctx
 	p.cmds = cmds
 
+	resp, err := dnssd.NewResponder()
+	if err != nil {
+		return fmt.Errorf("homekit: mdns: %w", err)
+	}
+	p.responder = resp
+	go func() { _ = resp.Respond(ctx) }()
+
+	if p.cfg.Camera.Enabled {
+		if err := p.startCamera(); err != nil {
+			return err
+		}
+	}
 	if err := p.buildAndServe(sensors); err != nil {
 		return err
 	}
@@ -325,19 +341,6 @@ func (p *HomeKitPublisher) buildAndServe(sensors []camera.Sensor) error {
 		p.log.Info("homekit: shutter switch added")
 	}
 
-	// Optional IP Camera accessory at fixed AID (only one camera per bridge).
-	if p.cfg.Camera.Enabled {
-		prev := p.camera
-		p.camera = NewHomeKitCamera(p.cfg.Camera, p.log)
-		if prev != nil {
-			p.camera.replace(prev)
-		}
-		camAcc := p.camera.Accessory()
-		camAcc.Id = aidCamera
-		accs = append(accs, camAcc.A)
-		p.log.Info("homekit: camera accessory added", "name", p.cfg.Camera.Name)
-	}
-
 	if len(accs) == 0 {
 		return fmt.Errorf("homekit: no accessories to expose")
 	}
@@ -359,19 +362,6 @@ func (p *HomeKitPublisher) buildAndServe(sensors []camera.Sensor) error {
 		return fmt.Errorf("homekit: create server: %w", err)
 	}
 	server.Pin = p.cfg.Pin
-	if p.camera != nil {
-		p.camera.setSessionSecrets(server.SharedSecret)
-		p.camera.rec.setStore(fs)
-		// Snapshots: Home asks for one with POST /resource (camera tile,
-		// HomeKit Secure Video's event snapshots); hap has no route for it.
-		server.ServeMux().HandleFunc("/resource", func(w http.ResponseWriter, r *http.Request) {
-			if !server.IsAuthorized(r) {
-				http.Error(w, "", http.StatusUnauthorized)
-				return
-			}
-			p.camera.serveSnapshot(w, r)
-		})
-	}
 	if p.cfg.Port != "" {
 		server.Addr = ":" + p.cfg.Port
 	} else {
@@ -381,6 +371,7 @@ func (p *HomeKitPublisher) buildAndServe(sensors []camera.Sensor) error {
 	// Restrict mDNS to the WiFi interface (ssv0) to avoid
 	// brutella/dnssd NETLINK infinite loop on embedded systems.
 	server.Ifaces = []string{"ssv0"}
+	server.Responder = p.responder
 
 	// Cancel the previous server's goroutine if any. The new server
 	// derives its context from rootCtx so the outer cancellation still
@@ -399,26 +390,7 @@ func (p *HomeKitPublisher) buildAndServe(sensors []camera.Sensor) error {
 		"accessories", len(accs),
 	)
 
-	go func() {
-		backoff := 2 * time.Second
-		for {
-			p.log.Info("homekit: starting HAP server...")
-			err := server.ListenAndServe(srvCtx)
-			if srvCtx.Err() != nil {
-				// Shutdown requested — exit cleanly
-				return
-			}
-			p.log.Error("homekit: HAP server error, restarting", "error", err, "backoff", backoff)
-			select {
-			case <-srvCtx.Done():
-				return
-			case <-time.After(backoff):
-			}
-			if backoff < 60*time.Second {
-				backoff *= 2
-			}
-		}
-	}()
+	go p.serve(srvCtx, server, "bridge")
 
 	return nil
 }
@@ -478,4 +450,64 @@ func bumpOnStaticChange(st hap.Store, logger *slog.Logger) {
 		logger.Warn("homekit: static config marker not saved", "error", err)
 	}
 	logger.Info("homekit: advertised config changed, bumping c#", "config", staticConfig)
+}
+
+// serve runs a HAP server until ctx ends, starting it again after errors.
+func (p *HomeKitPublisher) serve(ctx context.Context, server *hap.Server, what string) {
+	backoff := 2 * time.Second
+	for {
+		p.log.Info("homekit: starting HAP server...", "server", what)
+		err := server.ListenAndServe(ctx)
+		if ctx.Err() != nil {
+			return
+		}
+		p.log.Error("homekit: HAP server error, restarting", "server", what, "error", err, "backoff", backoff)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+		if backoff < 60*time.Second {
+			backoff *= 2
+		}
+	}
+}
+
+// cameraPort is the standalone camera's HAP port, next to the bridge's.
+const cameraPort = ":51828"
+
+// startCamera publishes the camera as a standalone accessory, with its own
+// pairing (same PIN): HomeKit Secure Video records only cameras that are
+// not bridged (the home hub records Scrypted's standalone camera, never
+// ours behind the bridge; Scrypted documents the same, 2026-10-10). Built
+// once: the bridge is rebuilt when sensors change, the camera not.
+func (p *HomeKitPublisher) startCamera() error {
+	p.camera = NewHomeKitCamera(p.cfg.Camera, p.log)
+	dir := filepath.Join(p.cfg.DataDir, "camera")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("homekit: camera store: %w", err)
+	}
+	server, err := hap.NewServer(hap.NewFsStore(dir), p.camera.Accessory().A)
+	if err != nil {
+		return fmt.Errorf("homekit: camera server: %w", err)
+	}
+	server.Pin = p.cfg.Pin
+	server.Addr = cameraPort
+	server.Ifaces = []string{"ssv0"}
+	server.Responder = p.responder
+	p.camera.setSessionSecrets(server.SharedSecret)
+	// What iOS chose for recording is kept with the bridge's state.
+	p.camera.rec.setStore(hap.NewFsStore(p.cfg.DataDir))
+	// Snapshots: Home asks for one with POST /resource (camera tile,
+	// HomeKit Secure Video's event snapshots); hap has no route for it.
+	server.ServeMux().HandleFunc("/resource", func(w http.ResponseWriter, r *http.Request) {
+		if !server.IsAuthorized(r) {
+			http.Error(w, "", http.StatusUnauthorized)
+			return
+		}
+		p.camera.serveSnapshot(w, r)
+	})
+	go p.serve(p.rootCtx, server, "camera")
+	p.log.Info("homekit: standalone camera", "name", p.cfg.Camera.Name, "port", cameraPort, "pin", p.cfg.Pin)
+	return nil
 }

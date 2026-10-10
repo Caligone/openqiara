@@ -69,18 +69,6 @@ func (c *HomeKitCamera) SetLowHub(h *mediahub.Hub) {
 	c.low = h
 }
 
-// replace takes over from the camera of a previous build: its media hub,
-// set once at startup, and its recording, stopped so that it lets go of
-// the hub and its data stream port.
-func (c *HomeKitCamera) replace(prev *HomeKitCamera) {
-	prev.rec.recorder.SetActive(false)
-	prev.rec.stream.Close()
-	if prev.hub != nil {
-		c.SetMediaHub(prev.hub)
-	}
-	c.low = prev.low
-}
-
 // cameraSession tracks the state of a single live-streaming session
 // negotiated through SetupEndpoints + SelectedRTPStreamConfiguration.
 // One session per active iOS viewer.
