@@ -327,7 +327,11 @@ func (p *HomeKitPublisher) buildAndServe(sensors []camera.Sensor) error {
 
 	// Optional IP Camera accessory at fixed AID (only one camera per bridge).
 	if p.cfg.Camera.Enabled {
+		prev := p.camera
 		p.camera = NewHomeKitCamera(p.cfg.Camera, p.log)
+		if prev != nil {
+			p.camera.replace(prev)
+		}
 		camAcc := p.camera.Accessory()
 		camAcc.Id = aidCamera
 		accs = append(accs, camAcc.A)
@@ -357,6 +361,7 @@ func (p *HomeKitPublisher) buildAndServe(sensors []camera.Sensor) error {
 	server.Pin = p.cfg.Pin
 	if p.camera != nil {
 		p.camera.setSessionSecrets(server.SharedSecret)
+		p.camera.rec.setStore(fs)
 		// Snapshots: Home asks for one with POST /resource (camera tile,
 		// HomeKit Secure Video's event snapshots); hap has no route for it.
 		server.ServeMux().HandleFunc("/resource", func(w http.ResponseWriter, r *http.Request) {
