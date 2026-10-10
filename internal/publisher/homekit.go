@@ -14,7 +14,6 @@ import (
 	"github.com/brutella/hap"
 	"github.com/brutella/hap/accessory"
 	"github.com/brutella/hap/characteristic"
-	haplog "github.com/brutella/hap/log"
 
 	"github.com/caligone/openqiara/internal/camera"
 )
@@ -352,11 +351,6 @@ func (p *HomeKitPublisher) buildAndServe(sensors []camera.Sensor) error {
 
 	fs := hap.NewFsStore(p.cfg.DataDir)
 	bumpOnStaticChange(fs, p.log)
-	if _, err := os.Stat("/data/hap_debug"); err == nil { // DEBUG hksv
-		if f, err := os.Create("/tmp/hap-debug.log"); err == nil {
-			haplog.Debug.SetOutput(f)
-		}
-	}
 	server, err := hap.NewServer(fs, bridge.A, accs...)
 	if err != nil {
 		return fmt.Errorf("homekit: create server: %w", err)
