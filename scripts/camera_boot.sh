@@ -180,13 +180,12 @@ done
 sleep 2
 EUPID=$(cat /tmp/key.eupid 2>/dev/null || echo "")
 MAC=$(cat /sys/class/net/ssv0/address 2>/dev/null || echo "")
-# openqiarad reads the main stream (1080p, multicast 9600) and the
-# microphone (9700). The 720p and 360p encodes fed the vendor's hls only:
-# off, about a quarter of a core and 14 MB saved (measured 2026-10-10),
-# person detection unaffected.
+# openqiarad reads the main stream (1080p, multicast 9600), the 360p one
+# (9602: the HomeKit home hub asks 640x360 to analyze motion) and the
+# microphone (9700). The 720p encode fed the vendor's hls only: off.
 if [ -n "$EUPID" ] && [ -n "$MAC" ]; then
     /usr/bin/hlcamd -d 75 --iv-detection 1 \
-        --flip-flop-detect 1 --eupid "$EUPID" --mac "$MAC" --use-h264 --no-720p --no-360p \
+        --flip-flop-detect 1 --eupid "$EUPID" --mac "$MAC" --use-h264 --no-720p \
         >> /data/hlcamd.log 2>&1 &
 fi
 sleep 2
