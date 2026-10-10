@@ -54,7 +54,7 @@ func TestCameraHasRecordingServices(t *testing.T) {
 		"209": {"pr", "pw", "ev"},
 		"131": {"pr", "pw", "wr"},
 		"130": {"pr"},
-		"226": {"pr", "pw", "ev", "tw"},
+		"226": {"pr", "pw", "ev"}, // no tw: hap panics on unprepared timed writes
 		"21B": {"pr", "pw", "ev"},
 	} {
 		if !slices.Equal(perms[typ], want) {

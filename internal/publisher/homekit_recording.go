@@ -70,7 +70,11 @@ func newRecording(acc *accessory.Camera, logger *slog.Logger) *recording {
 	r.mgmt.SupportedAudioRecordingConfiguration.SetValue(recordingOffer.Audio())
 	r.active = characteristic.NewActive()
 	r.mgmt.AddC(r.active.C)
-	r.audioActive = switch01(typeRecordingAudioActive, append(rw, characteristic.PermissionTimedWrite)...)
+	// HAP-NodeJS gives it timed write too, but hap v0.0.35 panics on a
+	// timed-write characteristic written without a prepare
+	// (characteristics.go:198, nil timedWr): the panic took the whole
+	// request, live video setup included. Plain writes are accepted.
+	r.audioActive = switch01(typeRecordingAudioActive, rw...)
 	_ = r.audioActive.SetValue(0)
 	r.mgmt.AddC(r.audioActive.C)
 
