@@ -175,14 +175,7 @@ func main() {
 		// Re-pushed on every (re)connect so HA recovers after a broker/HA
 		// restart without a daemon reboot.
 		mqttPub.HAPublisher().SetOnConnect(func() {
-			for _, s := range cam.CachedSensors() {
-				if s.Type == "KPD" {
-					continue
-				}
-				if err := mqttPub.PublishSensorState(ctx, s); err != nil {
-					logger.Warn("publish sensor state failed", "id", s.ID, "error", err)
-				}
-			}
+			republishSensorStates(ctx, cam.CachedSensors(), mqttPub.PublishSensorState, logger)
 			// Republish the current alarm state too, so HA recovers the real
 			// state after a broker/HA restart that dropped the retained value.
 			// Standalone only — in alarmo mode HA Alarmo owns the panel and we
@@ -654,6 +647,22 @@ func webSrvSetAlarm(state string, pubs []publisher.Publisher, ctx context.Contex
 	for _, p := range pubs {
 		if err := p.PublishAlarmState(ctx, state); err != nil {
 			logger.Error("publish alarm state failed", "error", err)
+		}
+	}
+}
+
+// republishSensorStates pushes the sensors' live state on an MQTT
+// (re)connect. A keypad has no state; nor does a door or motion sensor
+// before its first report since the start: the state retained for it on
+// the broker, which Home Assistant reads back after its own restart,
+// stays.
+func republishSensorStates(ctx context.Context, sensors []camera.Sensor, publish func(context.Context, camera.Sensor) error, logger *slog.Logger) {
+	for _, s := range sensors {
+		if s.Type == "KPD" || !s.StateKnown() {
+			continue
+		}
+		if err := publish(ctx, s); err != nil {
+			logger.Warn("publish sensor state failed", "id", s.ID, "error", err)
 		}
 	}
 }

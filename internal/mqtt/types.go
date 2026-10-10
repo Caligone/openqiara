@@ -27,18 +27,18 @@ type haDevice struct {
 
 // dwsState is the MQTT state payload for a door/window sensor.
 type dwsState struct {
-	Open        bool `json:"open"`
-	Battery     int  `json:"battery"`
-	Reachable   bool `json:"reachable"`
-	Temperature *int `json:"temperature,omitempty"` // °C, absent until reported
+	Open        *bool `json:"open,omitempty"` // absent until the sensor reports after a start
+	Battery     int   `json:"battery"`
+	Reachable   bool  `json:"reachable"`
+	Temperature *int  `json:"temperature,omitempty"` // °C, absent until reported
 }
 
 // pirState is the MQTT state payload for a motion sensor.
 type pirState struct {
-	Motion      bool `json:"motion"`
-	Battery     int  `json:"battery"`
-	Reachable   bool `json:"reachable"`
-	Temperature *int `json:"temperature,omitempty"` // °C, absent until reported
+	Motion      *bool `json:"motion,omitempty"` // absent until the sensor reports after a start
+	Battery     int   `json:"battery"`
+	Reachable   bool  `json:"reachable"`
+	Temperature *int  `json:"temperature,omitempty"` // °C, absent until reported
 }
 
 // srnState is the MQTT state payload for a siren.

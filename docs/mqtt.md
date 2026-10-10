@@ -73,7 +73,7 @@ Payload: {
   "unique_id": "openqiara_dws_<ID>",
   "device_class": "opening",
   "state_topic": "openqiara/sensor/<ID>/state",
-  "value_template": "{{ value_json.open | lower }}",
+  "value_template": "{{ value_json.open | lower if value_json.open is defined else '' }}",
   "payload_on": "true",
   "payload_off": "false",
   "device": { "identifiers": ["openqiara_<ID>"], ... }
@@ -82,12 +82,24 @@ Payload: {
 
 State : `{"open": true, "battery": 100, "reachable": true, "temperature": 21}`
 
+Après un démarrage d'openqiarad, une porte n'a pas d'état tant qu'elle n'a
+rien rapporté : une porte laissée ouverte n'envoie rien de plus. Jusque-là :
+
+- à la (re)connexion MQTT, son état n'est pas republié : celui retenu sur le
+  broker reste, et Home Assistant le relit après son propre redémarrage ;
+- sa pile ou sa joignabilité partent sans `open`
+  (`{"battery": 100, "reachable": false}`) : le `value_template` ne rend
+  rien et Home Assistant garde l'état qu'il avait.
+
 ### PIR (binary_sensor)
 
 ```
 Topic:   homeassistant/binary_sensor/openqiara_<ID>/config
 State:   {"motion": true, "battery": 100, "reachable": true}
 ```
+
+Même règle que la porte : `motion` est absent tant que le détecteur n'a rien
+rapporté depuis le démarrage.
 
 ### SRN (siren)
 

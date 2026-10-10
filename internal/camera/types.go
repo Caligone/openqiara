@@ -12,6 +12,9 @@ type Sensor struct {
 	Temperature *int `json:"temperature,omitempty"`
 	Open        bool `json:"open"`   // DWS: door/window open
 	Motion      bool `json:"motion"` // PIR: motion detected
+	// Reported: Open or Motion came from the sensor since openqiarad
+	// started. Until then they hold their zero value, not a state.
+	Reported bool `json:"-"`
 	// No tamper field: DomusRF sensors expose no usable tamper state (issue #30).
 	KPDState string `json:"kpd_state,omitempty"` // KPD: "disarmed", "armed_away", "armed_night"
 	// SirenState is what the siren reports: off, test, exit_delay, armed,
@@ -19,6 +22,13 @@ type Sensor struct {
 	SirenState string `json:"siren_state,omitempty"`
 	LastSeen   int64  `json:"last_seen"`
 	Label      string `json:"label,omitempty"` // user-defined name
+}
+
+// StateKnown tells whether the sensor has a state to publish. A door or
+// motion sensor has none until it reports after a start: its zero value
+// would overwrite, as closed, the state Home Assistant kept.
+func (s Sensor) StateKnown() bool {
+	return s.Reported || (s.Type != "DWS" && s.Type != "PIR")
 }
 
 // SensorEvent is emitted when a sensor state changes.
