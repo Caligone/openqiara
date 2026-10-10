@@ -45,6 +45,8 @@ type HomeKitCamera struct {
 	// s'y abonne. Il réveille hlcamd si son flux s'est figé.
 	hub *mediahub.Hub
 
+	rec *recording // HomeKit Secure Video services
+
 	mu       sync.Mutex
 	sessions map[string]*cameraSession // keyed by session id (base64)
 }
@@ -114,6 +116,8 @@ func NewHomeKitCamera(cfg CameraConfig, logger *slog.Logger) *HomeKitCamera {
 		Firmware:     "0.1.0",
 	})
 
+	cam.rec = newRecording(cam.acc, logger)
+
 	// Publish the supported codec configurations once. iOS reads these
 	// to know what we can do (resolutions, codecs, framerates).
 	cam.publishStaticConfigs()
@@ -123,6 +127,13 @@ func NewHomeKitCamera(cfg CameraConfig, logger *slog.Logger) *HomeKitCamera {
 	cam.acc.StreamManagement1.SelectedRTPStreamConfiguration.OnValueRemoteUpdate(cam.onSelectedRTPStreamConfiguration)
 
 	return cam
+}
+
+// SetMotion reports whether someone is in front of the camera (person or
+// pet detection): the camera's motion sensor, which triggers HomeKit
+// Secure Video.
+func (c *HomeKitCamera) SetMotion(on bool) {
+	c.rec.setMotion(on)
 }
 
 // Accessory returns the underlying HAP accessory so the publisher can
