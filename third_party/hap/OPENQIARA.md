@@ -10,3 +10,7 @@ Changes, each marked `openqiara` in the code:
 - `characteristics.go`: a timed-write characteristic written without a
   prepare no longer panics (nil timed write); it gets the error status
   HAP specifies (-70410).
+- `server.go`: `Server.Responder`, an optional shared mDNS responder:
+  the bridge and the standalone camera announce their services through
+  one responder that openqiara runs, rather than two responders on
+  `_hap._tcp` in one process.

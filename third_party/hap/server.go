@@ -42,6 +42,13 @@ type Server struct {
 	// associated dnssd service is announced.
 	Ifaces []string
 
+	// Responder, when set, announces this server's service: several
+	// servers of one process then share one mDNS responder, which the
+	// caller runs (openqiara: a standalone camera next to the bridge;
+	// two responders on _hap._tcp drifted apart). Nil: the server runs
+	// its own.
+	Responder dnssd.Responder
+
 	MfiCompliant bool   // default false
 	Protocol     string // default "1.0"
 	SetupId      string
@@ -218,9 +225,11 @@ func (s *Server) listenAndServe(ctx context.Context) error {
 	s.port = i
 
 	// Announce the server using dnssd.
-	resp, err := dnssd.NewResponder()
-	if err != nil {
-		return fmt.Errorf("dnssd: %s", err)
+	resp, owned := s.Responder, s.Responder == nil
+	if owned {
+		if resp, err = dnssd.NewResponder(); err != nil {
+			return fmt.Errorf("dnssd: %s", err)
+		}
 	}
 	s.responder = resp
 
@@ -240,7 +249,12 @@ func (s *Server) listenAndServe(ctx context.Context) error {
 
 	dnsStop := make(chan struct{})
 	go func() {
-		resp.Respond(dnsCtx)
+		if owned {
+			resp.Respond(dnsCtx)
+		} else {
+			<-dnsCtx.Done()
+			resp.Remove(h)
+		}
 		log.Debug.Println("dnssd responder stopped")
 		dnsStop <- struct{}{}
 	}()
