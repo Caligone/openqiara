@@ -13,7 +13,6 @@ import (
 
 	"github.com/brutella/hap/accessory"
 	"github.com/brutella/hap/rtp"
-	"github.com/brutella/hap/service"
 	"github.com/brutella/hap/tlv8"
 
 	"github.com/caligone/openqiara/internal/camera"
@@ -138,10 +137,8 @@ func NewHomeKitCamera(cfg CameraConfig, logger *slog.Logger) *HomeKitCamera {
 	cam.publishStaticConfigs()
 
 	// Wire the dynamic handlers.
-	for _, sm := range cam.streams() {
-		sm.SetupEndpoints.OnValueRemoteUpdate(func(b []byte) { cam.onSetupEndpoints(sm, b) })
-		sm.SelectedRTPStreamConfiguration.OnValueRemoteUpdate(cam.onSelectedRTPStreamConfiguration)
-	}
+	cam.acc.StreamManagement1.SetupEndpoints.OnValueRemoteUpdate(cam.onSetupEndpoints)
+	cam.acc.StreamManagement1.SelectedRTPStreamConfiguration.OnValueRemoteUpdate(cam.onSelectedRTPStreamConfiguration)
 
 	return cam
 }
@@ -181,24 +178,11 @@ func (c *HomeKitCamera) Accessory() *accessory.Camera {
 	return c.acc
 }
 
-// streams are the camera's two RTP stream management services: HomeKit
-// wants at least two (HAP-NodeJS: "HomeKit requires at least 2 streams").
-// Sessions are keyed by their id, whichever service set them up.
-func (c *HomeKitCamera) streams() []*service.CameraRTPStreamManagement {
-	return []*service.CameraRTPStreamManagement{c.acc.StreamManagement1, c.acc.StreamManagement2}
-}
-
 // publishStaticConfigs marshals the supported video, audio and crypto
 // configurations into the corresponding read-only characteristics.
 func (c *HomeKitCamera) publishStaticConfigs() {
-	for _, sm := range c.streams() {
-		c.publishStreamConfigs(sm)
-	}
-}
-
-func (c *HomeKitCamera) publishStreamConfigs(sm *service.CameraRTPStreamManagement) {
 	if b, err := tlv8.Marshal(rtp.DefaultVideoStreamConfiguration()); err == nil {
-		sm.SupportedVideoStreamConfiguration.SetValue(b)
+		c.acc.StreamManagement1.SupportedVideoStreamConfiguration.SetValue(b)
 	} else {
 		c.log.Error("camera: marshal video config", "error", err)
 	}
@@ -209,20 +193,20 @@ func (c *HomeKitCamera) publishStreamConfigs(sm *service.CameraRTPStreamManageme
 		rtp.NewAacEldAudioCodecConfiguration(),
 	}}
 	if b, err := tlv8.Marshal(audioCfg); err == nil {
-		sm.SupportedAudioStreamConfiguration.SetValue(b)
+		c.acc.StreamManagement1.SupportedAudioStreamConfiguration.SetValue(b)
 	} else {
 		c.log.Error("camera: marshal audio config", "error", err)
 	}
 
 	if b, err := tlv8.Marshal(rtp.NewConfiguration(rtp.CryptoSuite_AES_CM_128_HMAC_SHA1_80)); err == nil {
-		sm.SupportedRTPConfiguration.SetValue(b)
+		c.acc.StreamManagement1.SupportedRTPConfiguration.SetValue(b)
 	} else {
 		c.log.Error("camera: marshal rtp config", "error", err)
 	}
 
 	// Streaming status: 0 = available
 	if b, err := tlv8.Marshal(rtp.StreamingStatus{Status: rtp.StreamingStatusAvailable}); err == nil {
-		sm.StreamingStatus.SetValue(b)
+		c.acc.StreamManagement1.StreamingStatus.SetValue(b)
 	} else {
 		c.log.Error("camera: marshal streaming status", "error", err)
 	}
@@ -231,7 +215,7 @@ func (c *HomeKitCamera) publishStreamConfigs(sm *service.CameraRTPStreamManageme
 // onSetupEndpoints handles a write to the SetupEndpoints characteristic.
 // iOS writes its own IP, ports and SRTP keys, then expects us to write
 // back our IP, ports and SRTP keys (round-trip).
-func (c *HomeKitCamera) onSetupEndpoints(sm *service.CameraRTPStreamManagement, buf []byte) {
+func (c *HomeKitCamera) onSetupEndpoints(buf []byte) {
 	var req rtp.SetupEndpoints
 	if err := tlv8.Unmarshal(buf, &req); err != nil {
 		c.log.Error("camera: unmarshal setup endpoints", "error", err)
@@ -311,7 +295,7 @@ func (c *HomeKitCamera) onSetupEndpoints(sm *service.CameraRTPStreamManagement, 
 		c.log.Error("camera: marshal setup response", "error", err)
 		return
 	}
-	sm.SetupEndpoints.SetValue(respBytes)
+	c.acc.StreamManagement1.SetupEndpoints.SetValue(respBytes)
 
 	c.log.Info("camera: setup endpoints reply sent",
 		"session", base64.StdEncoding.EncodeToString(req.SessionId),

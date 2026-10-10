@@ -20,13 +20,11 @@ func NewCamera(info Info) *Camera {
 	a.Control = service.NewCameraControl()
 	a.AddS(a.Control.S)
 
-	// A camera must support at least 2 rtp streams (openqiara: the
-	// second was left out; HAP-NodeJS has two, and a HomeKit Secure Video
-	// home hub watches one while another views).
+	// TODO (mah) a camera must support at least 2 rtp streams
 	a.StreamManagement1 = service.NewCameraRTPStreamManagement()
 	a.StreamManagement2 = service.NewCameraRTPStreamManagement()
 	a.AddS(a.StreamManagement1.S)
-	a.AddS(a.StreamManagement2.S)
+	// a.AddS(a.StreamManagement2.S)
 
 	return &a
 }
