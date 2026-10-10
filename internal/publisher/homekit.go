@@ -356,6 +356,7 @@ func (p *HomeKitPublisher) buildAndServe(sensors []camera.Sensor) error {
 	}
 	server.Pin = p.cfg.Pin
 	if p.camera != nil {
+		p.camera.setSessionSecrets(server.SharedSecret)
 		// Snapshots: Home asks for one with POST /resource (camera tile,
 		// HomeKit Secure Video's event snapshots); hap has no route for it.
 		server.ServeMux().HandleFunc("/resource", func(w http.ResponseWriter, r *http.Request) {

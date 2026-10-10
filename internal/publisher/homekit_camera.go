@@ -147,6 +147,12 @@ func (c *HomeKitCamera) serveSnapshot(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(jpeg)
 }
 
+// setSessionSecrets gives the camera access to the HAP sessions' secrets,
+// which HomeKit Secure Video's data stream derives its keys from.
+func (c *HomeKitCamera) setSessionSecrets(secret func(addr string) ([32]byte, bool)) {
+	c.rec.secret = secret
+}
+
 // SetMotion reports whether someone is in front of the camera (person or
 // pet detection): the camera's motion sensor, which triggers HomeKit
 // Secure Video.

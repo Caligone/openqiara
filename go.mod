@@ -41,3 +41,5 @@ require (
 	golang.org/x/tools v0.45.0 // indirect
 	gopkg.in/Regis24GmbH/go-diacritics.v2 v2.0.3 // indirect
 )
+
+replace github.com/brutella/hap => ./third_party/hap
