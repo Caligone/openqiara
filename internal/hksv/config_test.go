@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-var offer = Offer{PrebufferMs: 4000, FragmentMs: 4000, Width: 1920, Height: 1080, FPS: 30}
+var offer = Offer{PrebufferMs: 4000, FragmentMs: 4000, Resolutions: [][3]int{{1920, 1080, 30}, {1280, 720, 30}}}
 
 // The offer's TLVs, worked out by hand from HAP-NodeJS's encoders.
 func TestOfferCamera(t *testing.T) {
@@ -23,10 +23,14 @@ func TestOfferCamera(t *testing.T) {
 
 func TestOfferVideo(t *testing.T) {
 	want := []byte{
-		0x01, 24, // codec configuration
+		0x01, 59, // codec configuration
 		0x01, 1, 0, // H.264
-		0x02, 6, 0x01, 1, 0, 0x02, 1, 2, // baseline, level 4.0
+		0x02, 26, // parameters
+		0x01, 1, 0, 0, 0, 0x01, 1, 1, 0, 0, 0x01, 1, 2, // profiles baseline, main, high
+		0x02, 1, 0, 0, 0, 0x02, 1, 1, 0, 0, 0x02, 1, 2, // levels 3.1, 3.2, 4.0
 		0x03, 11, 0x01, 2, 0x80, 0x07, 0x02, 2, 0x38, 0x04, 0x03, 1, 30, // 1920x1080@30
+		0, 0,
+		0x03, 11, 0x01, 2, 0x00, 0x05, 0x02, 2, 0xd0, 0x02, 0x03, 1, 30, // 1280x720@30
 	}
 	if got := offer.Video(); !bytes.Equal(got, want) {
 		t.Fatalf("\n got % x\nwant % x", got, want)
@@ -35,9 +39,11 @@ func TestOfferVideo(t *testing.T) {
 
 func TestOfferAudio(t *testing.T) {
 	want := []byte{
-		0x01, 14,
+		0x01, 39,
 		0x01, 1, 0, // AAC-LC
-		0x02, 9, 0x01, 1, 1, 0x02, 1, 0, 0x03, 1, 1, // mono, variable, 16 kHz
+		0x02, 34, 0x01, 1, 1, 0x02, 1, 0, // mono, variable
+		0x03, 1, 0, 0, 0, 0x03, 1, 1, 0, 0, 0x03, 1, 2, 0, 0, // 8, 16, 24 kHz
+		0x03, 1, 3, 0, 0, 0x03, 1, 4, 0, 0, 0x03, 1, 5, // 32, 44.1, 48 kHz
 	}
 	if got := offer.Audio(); !bytes.Equal(got, want) {
 		t.Fatalf("\n got % x\nwant % x", got, want)

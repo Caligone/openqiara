@@ -33,9 +33,13 @@ const (
 	typeSetupDataStreamTransport     = "131"
 )
 
-// recordingOffer is what the camera offers: hlcamd's stream, a 4 s
-// prebuffer and 4 s fragments (an IDR every 0.5 s starts each).
-var recordingOffer = hksv.Offer{PrebufferMs: 4000, FragmentMs: 4000, Width: 1920, Height: 1080, FPS: 30}
+// recordingOffer is what the camera offers: a 4 s prebuffer, 4 s fragments
+// (an IDR every 0.5 s starts each), HAP-NodeJS's example resolutions.
+// hlcamd only makes 1920x1080 at 30 fps.
+var recordingOffer = hksv.Offer{PrebufferMs: 4000, FragmentMs: 4000, Resolutions: [][3]int{
+	{1920, 1080, 30}, {1600, 1200, 30}, {1280, 960, 30}, {1280, 720, 30}, {640, 480, 30},
+	{640, 360, 30}, {480, 360, 30}, {480, 270, 30}, {320, 240, 30}, {320, 240, 15}, {320, 180, 30},
+}}
 
 // recording holds the camera's HKSV services.
 type recording struct {

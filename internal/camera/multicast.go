@@ -20,6 +20,7 @@ const (
 	MulticastGroup     = "224.0.0.1"
 	MulticastVideoMain = 9600
 	MulticastAudio     = 9700
+	MulticastJPEG      = 9610
 )
 
 // multicastHeader is the 24-byte header before each fragment (packed,
@@ -159,4 +160,30 @@ func readMulticast(ctx context.Context, conn net.PacketConn, kind string, logger
 		}
 	}()
 	return out
+}
+
+// MulticastSnapshot returns the next JPEG hlcamd sends on port (1280x720,
+// one a second), or an error once ctx ends.
+func MulticastSnapshot(ctx context.Context, port int, logger *slog.Logger) ([]byte, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	frames, err := listenMulticast(ctx, port, "jpeg", logger, func(frame []byte, pts int64, out func(Sample) bool) {
+		out(Sample{PTS: pts, Data: frame})
+	})
+	if err != nil {
+		return nil, err
+	}
+	for {
+		select {
+		case s, ok := <-frames:
+			if !ok {
+				return nil, ctx.Err()
+			}
+			if len(s.Data) > 2 && s.Data[0] == 0xff && s.Data[1] == 0xd8 {
+				return s.Data, nil
+			}
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 }

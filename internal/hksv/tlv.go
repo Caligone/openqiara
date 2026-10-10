@@ -34,6 +34,19 @@ func encode(items ...item) []byte {
 	return b
 }
 
+// list repeats type t for each value, with the empty separator (type 0)
+// HomeKit puts between entries of the same type.
+func list(t byte, values ...[]byte) []item {
+	var items []item
+	for i, v := range values {
+		if i > 0 {
+			items = append(items, item{0, nil})
+		}
+		items = append(items, item{t, v})
+	}
+	return items
+}
+
 // decode reads TLV8, joining chunks of one value (a 255-byte chunk
 // followed by one of the same type).
 func decode(b []byte) ([]item, error) {

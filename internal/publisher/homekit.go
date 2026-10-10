@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
@@ -12,6 +13,7 @@ import (
 	"github.com/brutella/hap"
 	"github.com/brutella/hap/accessory"
 	"github.com/brutella/hap/characteristic"
+	haplog "github.com/brutella/hap/log"
 
 	"github.com/caligone/openqiara/internal/camera"
 )
@@ -343,11 +345,27 @@ func (p *HomeKitPublisher) buildAndServe(sensors []camera.Sensor) error {
 
 	fs := hap.NewFsStore(p.cfg.DataDir)
 	bumpOnStaticChange(fs, p.log)
+	if _, err := os.Stat("/data/hap_debug"); err == nil { // DEBUG hksv
+		if f, err := os.Create("/tmp/hap-debug.log"); err == nil {
+			haplog.Debug.SetOutput(f)
+		}
+	}
 	server, err := hap.NewServer(fs, bridge.A, accs...)
 	if err != nil {
 		return fmt.Errorf("homekit: create server: %w", err)
 	}
 	server.Pin = p.cfg.Pin
+	if p.camera != nil {
+		// Snapshots: Home asks for one with POST /resource (camera tile,
+		// HomeKit Secure Video's event snapshots); hap has no route for it.
+		server.ServeMux().HandleFunc("/resource", func(w http.ResponseWriter, r *http.Request) {
+			if !server.IsAuthorized(r) {
+				http.Error(w, "", http.StatusUnauthorized)
+				return
+			}
+			p.camera.serveSnapshot(w, r)
+		})
+	}
 	if p.cfg.Port != "" {
 		server.Addr = ":" + p.cfg.Port
 	} else {
@@ -441,7 +459,7 @@ func (p *HomeKitPublisher) sensorListChanged(next []camera.Sensor) bool {
 // values iOS caches: change it with them. hap bumps the configuration
 // number (c#), which makes iOS read the accessories again, only when their
 // structure changes, values aside.
-const staticConfig = "audio=aaceld16k"
+const staticConfig = "audio=aaceld16k;hksv=broad"
 
 // bumpOnStaticChange forgets hap's config hash when staticConfig changed:
 // hap then bumps c#.

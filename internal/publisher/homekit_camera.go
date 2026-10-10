@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"sync"
+	"time"
 
 	"github.com/brutella/hap/accessory"
 	"github.com/brutella/hap/rtp"
@@ -127,6 +129,22 @@ func NewHomeKitCamera(cfg CameraConfig, logger *slog.Logger) *HomeKitCamera {
 	cam.acc.StreamManagement1.SelectedRTPStreamConfiguration.OnValueRemoteUpdate(cam.onSelectedRTPStreamConfiguration)
 
 	return cam
+}
+
+// serveSnapshot answers POST /resource with the camera's next JPEG
+// (hlcamd's 1280x720, one a second). Home asks for a size; it scales what
+// it gets.
+func (c *HomeKitCamera) serveSnapshot(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	jpeg, err := camera.MulticastSnapshot(ctx, camera.MulticastJPEG, c.log)
+	if err != nil {
+		c.log.Debug("camera: no snapshot", "error", err)
+		http.Error(w, "", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "image/jpeg")
+	_, _ = w.Write(jpeg)
 }
 
 // SetMotion reports whether someone is in front of the camera (person or

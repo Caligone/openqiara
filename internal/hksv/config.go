@@ -47,9 +47,7 @@ const (
 
 	ContainerFMP4 = 0
 
-	CodecH264       = 0
-	ProfileBaseline = 0
-	Level4_0        = 2
+	CodecH264 = 0
 
 	AudioAACLC      = 0
 	AudioAACELD     = 1
@@ -58,15 +56,15 @@ const (
 	defaultChannels = 1
 )
 
-// Offer is what the camera offers HomeKit Secure Video: hlcamd's single
-// stream, H.264 Constrained Baseline level 4.0 at 1920x1080 and 30 fps, and
-// the microphone, 16 kHz mono.
+// Offer is what the camera offers HomeKit Secure Video. The home hub
+// turned down a narrow offer (Baseline only, one resolution, AAC-LC
+// 16 kHz: "error updating the camera's setting", nothing written, live
+// 2026-10-10), so it offers as broadly as HAP-NodeJS's example camera;
+// what iOS selects is what to deliver.
 type Offer struct {
-	PrebufferMs int // what the camera keeps before an event, at least 4000
-	FragmentMs  int // duration of each fMP4 fragment
-	Width       int
-	Height      int
-	FPS         int
+	PrebufferMs int      // what the camera keeps before an event, at least 4000
+	FragmentMs  int      // duration of each fMP4 fragment
+	Resolutions [][3]int // width, height, fps
 }
 
 // Camera is the SupportedCameraRecordingConfiguration value.
@@ -82,31 +80,37 @@ func (o Offer) Camera() []byte {
 	)
 }
 
-// Video is the SupportedVideoRecordingConfiguration value.
+// Video is the SupportedVideoRecordingConfiguration value: H.264, every
+// profile and level the streaming side offers too.
 func (o Offer) Video() []byte {
-	attrs := encode(
-		item{tWidth, u16(uint16(o.Width))},
-		item{tHeight, u16(uint16(o.Height))},
-		item{tFrameRate, u8(byte(o.FPS))},
-	)
-	codec := encode(
-		item{tCodecType, u8(CodecH264)},
-		item{tCodecParams, encode(item{tProfile, u8(ProfileBaseline)}, item{tLevel, u8(Level4_0)})},
-		item{tAttributes, attrs},
-	)
+	var attrs [][]byte
+	for _, r := range o.Resolutions {
+		attrs = append(attrs, encode(
+			item{tWidth, u16(uint16(r[0]))},
+			item{tHeight, u16(uint16(r[1]))},
+			item{tFrameRate, u8(byte(r[2]))},
+		))
+	}
+	params := encode(append(
+		list(tProfile, u8(0), u8(1), u8(2)),  // baseline, main, high
+		list(tLevel, u8(0), u8(1), u8(2))..., // 3.1, 3.2, 4.0
+	)...)
+	codec := encode(append([]item{
+		{tCodecType, u8(CodecH264)},
+		{tCodecParams, params},
+	}, list(tAttributes, attrs...)...)...)
 	return encode(item{tVideoCodec, codec})
 }
 
-// Audio is the SupportedAudioRecordingConfiguration value: AAC-LC, 16 kHz,
-// mono.
+// Audio is the SupportedAudioRecordingConfiguration value: AAC-LC, mono,
+// every sample rate.
 func (o Offer) Audio() []byte {
 	codec := encode(
 		item{tCodecType, u8(AudioAACLC)},
-		item{tCodecParams, encode(
-			item{tChannels, u8(defaultChannels)},
-			item{tBitrateMode, u8(BitrateVariable)},
-			item{tSampleRate, u8(SampleRate16kHz)},
-		)},
+		item{tCodecParams, encode(append([]item{
+			{tChannels, u8(defaultChannels)},
+			{tBitrateMode, u8(BitrateVariable)},
+		}, list(tSampleRate, u8(0), u8(1), u8(2), u8(3), u8(4), u8(5))...)...)},
 	)
 	return encode(item{tAudioCodec, codec})
 }
