@@ -14,6 +14,7 @@ import (
 	"github.com/brutella/hap/accessory"
 	"github.com/brutella/hap/characteristic"
 	haplog "github.com/brutella/hap/log"
+	"github.com/brutella/hap/service"
 
 	"github.com/caligone/openqiara/internal/camera"
 )
@@ -350,6 +351,11 @@ func (p *HomeKitPublisher) buildAndServe(sensors []camera.Sensor) error {
 			haplog.Debug.SetOutput(f)
 		}
 	}
+	// The protocol version HAP-NodeJS gives every published bridge.
+	protocol := service.NewProtocolInformation()
+	protocol.Version.SetValue("1.1.0")
+	bridge.AddS(protocol.S)
+
 	server, err := hap.NewServer(fs, bridge.A, accs...)
 	if err != nil {
 		return fmt.Errorf("homekit: create server: %w", err)

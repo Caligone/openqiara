@@ -120,9 +120,11 @@ func newRecording(acc *accessory.Camera, logger *slog.Logger) *recording {
 
 	// The live stream's own switch, which HAP-NodeJS gives every stream
 	// management service of a recording camera.
-	streamActive := characteristic.NewActive()
-	_ = streamActive.SetValue(characteristic.ActiveActive)
-	acc.StreamManagement1.AddC(streamActive.C)
+	for _, sm := range []*service.CameraRTPStreamManagement{acc.StreamManagement1, acc.StreamManagement2} {
+		streamActive := characteristic.NewActive()
+		_ = streamActive.SetValue(characteristic.ActiveActive)
+		sm.AddC(streamActive.C)
+	}
 
 	acc.AddS(r.mgmt.S)
 	acc.AddS(mode)

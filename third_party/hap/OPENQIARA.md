@@ -14,3 +14,6 @@ Changes, each marked `openqiara` in the code:
   the bridge and the standalone camera announce their services through
   one responder that openqiara runs, rather than two responders on
   `_hap._tcp` in one process.
+- `accessory/camera.go`: the camera has its two RTP stream management
+  services (the second was commented out): HAP-NodeJS has two, and the
+  home hub may need one to analyze while another views.
