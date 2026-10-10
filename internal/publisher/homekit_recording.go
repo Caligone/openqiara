@@ -1,11 +1,14 @@
 package publisher
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sync"
 
+	"github.com/brutella/hap"
 	"github.com/brutella/hap/accessory"
 	"github.com/brutella/hap/characteristic"
 	"github.com/brutella/hap/service"
@@ -51,13 +54,30 @@ type recording struct {
 	// from an address (hap.Server.SharedSecret, patched in third_party).
 	secret func(addr string) ([32]byte, bool)
 	stream *hksv.DataStream
+	// store keeps what iOS wrote across restarts, as HAP-NodeJS does: iOS
+	// doesn't write it again, and recordings are refused without it.
+	store hap.Store
 
-	mgmt        *service.CameraRecordingManagement
-	active      *characteristic.Active
-	audioActive *characteristic.Int
-	setupStream *characteristic.Bytes
-	motion      *service.MotionSensor
+	recorder *hksv.Recorder
+	dataSend *hksv.DataSend
+
+	mgmt         *service.CameraRecordingManagement
+	active       *characteristic.Active
+	audioActive  *characteristic.Int
+	cameraActive *characteristic.Int // HomeKitCameraActive
+	setupStream  *characteristic.Bytes
+	motion       *service.MotionSensor
+
+	mu       sync.Mutex
+	selected *hksv.Selected // nil until iOS chose
 }
+
+// Keys of the recording's state in hap's store.
+const (
+	storeActive      = "hksvActive"
+	storeAudioActive = "hksvAudioActive"
+	storeSelected    = "hksvSelected"
+)
 
 // switch01 is a 0/1 characteristic, as HomeKit's camera switches are.
 func switch01(typ string, perms ...string) *characteristic.Int {
@@ -91,7 +111,8 @@ func newRecording(acc *accessory.Camera, logger *slog.Logger) *recording {
 
 	mode := service.New(typeCameraOperatingMode)
 	mode.AddC(switch01(typeEventSnapshotsActive, rw...).C)
-	mode.AddC(switch01(typeHomeKitCameraActive, rw...).C)
+	r.cameraActive = switch01(typeHomeKitCameraActive, rw...)
+	mode.AddC(r.cameraActive.C)
 	mode.AddC(switch01(typePeriodicSnapshotsActive, rw...).C)
 
 	stream := service.New(typeDataStreamTransportMgmt)
@@ -131,16 +152,22 @@ func newRecording(acc *accessory.Camera, logger *slog.Logger) *recording {
 	acc.AddS(stream)
 	acc.AddS(r.motion.S)
 
+	r.recorder = hksv.NewRecorder(recordingOffer.PrebufferMs, logger)
+	r.dataSend = hksv.NewDataSend(r.openRecording, logger)
 	r.mgmt.SelectedCameraRecordingConfiguration.OnValueRemoteUpdate(func(b []byte) {
-		s, err := hksv.ParseSelected(b)
-		if err != nil {
-			r.log.Warn("hksv: bad selected configuration", "error", err, "tlv", fmt.Sprintf("% x", b))
-			return
+		if r.selectConfig(b) {
+			r.save(storeSelected, b)
 		}
-		r.log.Info("hksv: recording configuration selected", "config", s.String())
 	})
-	r.active.OnValueRemoteUpdate(func(v int) { r.log.Info("hksv: recording", "active", v == 1) })
-	r.audioActive.OnValueRemoteUpdate(func(v int) { r.log.Info("hksv: recording audio", "active", v == 1) })
+	r.active.OnValueRemoteUpdate(func(v int) {
+		r.log.Info("hksv: recording", "active", v == 1)
+		r.recorder.SetActive(v == 1)
+		r.save(storeActive, []byte{byte(v)})
+	})
+	r.audioActive.OnValueRemoteUpdate(func(v int) {
+		r.log.Info("hksv: recording audio", "active", v == 1)
+		r.save(storeAudioActive, []byte{byte(v)})
+	})
 	// The setup answer goes back in the write's response (permission wr).
 	r.stream = hksv.NewDataStream(r.serveStream, logger)
 	r.setupStream.SetValueRequestFunc = func(v any, req *http.Request) (any, int) {
@@ -164,22 +191,74 @@ func newRecording(acc *accessory.Camera, logger *slog.Logger) *recording {
 	return r
 }
 
-// serveStream handles one data stream connection from iOS. First step:
-// log what iOS asks; recordings are refused until they exist.
+// selectConfig takes the configuration iOS selected; false if it can't
+// be read.
+func (r *recording) selectConfig(b []byte) bool {
+	sel, err := hksv.ParseSelected(b)
+	if err != nil {
+		r.log.Warn("hksv: bad selected configuration", "error", err, "tlv", fmt.Sprintf("% x", b))
+		return false
+	}
+	r.log.Info("hksv: recording configuration selected", "config", sel.String())
+	r.mu.Lock()
+	r.selected = &sel
+	r.mu.Unlock()
+	return true
+}
+
+// setStore restores what iOS wrote before a restart, and keeps what it
+// writes next.
+func (r *recording) setStore(st hap.Store) {
+	r.store = st
+	if b, err := st.Get(storeSelected); err == nil && r.selectConfig(b) {
+		r.mgmt.SelectedCameraRecordingConfiguration.SetValue(b)
+	}
+	if b, err := st.Get(storeAudioActive); err == nil && len(b) == 1 {
+		_ = r.audioActive.SetValue(int(b[0]))
+	}
+	if b, err := st.Get(storeActive); err == nil && len(b) == 1 {
+		_ = r.active.SetValue(int(b[0]))
+		r.recorder.SetActive(b[0] == 1)
+	}
+}
+
+func (r *recording) save(key string, v []byte) {
+	if r.store == nil {
+		return
+	}
+	if err := r.store.Set(key, v); err != nil {
+		r.log.Warn("hksv: state not saved", "key", key, "error", err)
+	}
+}
+
+// serveStream handles one data stream connection from iOS: recordings.
 func (r *recording) serveStream(c *hksv.Conn) {
 	defer func() { _ = c.Close() }()
-	for {
-		h, m, err := c.Read()
-		if err != nil {
-			r.log.Info("hksv: data stream closed", "error", err)
-			return
-		}
-		r.log.Info("hksv: data stream message", "header", fmt.Sprint(h), "body", fmt.Sprint(m))
-		if h["request"] != nil {
-			// 6: protocol-specific error, the open is refused.
-			_ = c.Respond(h, 6, map[string]any{})
-		}
+	r.dataSend.Serve(c)
+}
+
+// openRecording decides on a recording request, as HAP-NodeJS's
+// handleDataSendOpen does: recording and the camera must be on, and iOS
+// must have chosen a configuration.
+func (r *recording) openRecording() (hksv.RecordFunc, int) {
+	if r.active.Value() != characteristic.ActiveActive || r.cameraActive.Value() != 1 {
+		return nil, hksv.ReasonNotAllowed
 	}
+	r.mu.Lock()
+	sel := r.selected
+	r.mu.Unlock()
+	if sel == nil {
+		return nil, hksv.ReasonInvalidConfig
+	}
+	o := hksv.Options{
+		FragmentMs: sel.FragmentMs,
+		// The microphone is AAC-LC 16 kHz or nothing.
+		Audio:     r.audioActive.Value() == 1 && sel.AudioCodec == hksv.AudioAACLC && sel.SampleRate == hksv.SampleRate16kHz,
+		AudioKbps: sel.AudioMaxKbps,
+	}
+	return func(ctx context.Context, emit func([]byte, bool) error) error {
+		return r.recorder.Record(ctx, o, emit)
+	}, 0
 }
 
 // setMotion reports motion in front of the camera, HKSV's trigger.

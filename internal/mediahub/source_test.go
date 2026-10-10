@@ -86,3 +86,25 @@ func TestMergeForwardsBothThenCloses(t *testing.T) {
 		t.Fatalf("%d video, %d audio, want 1 and 2", video, audio)
 	}
 }
+
+// A source that fails is started again while someone listens.
+func TestHubRestartsAFailedSource(t *testing.T) {
+	var starts atomic.Int32
+	src := func(ctx context.Context) (<-chan camera.Sample, error) {
+		starts.Add(1)
+		out := make(chan camera.Sample, 1)
+		out <- camera.Sample{IsVideo: true}
+		close(out) // the source dies right away
+		return out, nil
+	}
+	h := New("test", src, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	sub := h.Subscribe()
+	defer sub.Close()
+	for range 2 {
+		select {
+		case <-sub.Samples():
+		case <-time.After(3 * restartDelay):
+			t.Fatalf("source started %d times", starts.Load())
+		}
+	}
+}

@@ -1,14 +1,18 @@
 package publisher
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net/http/httptest"
 	"slices"
 	"testing"
 
 	"github.com/brutella/hap"
 	"github.com/brutella/hap/accessory"
+
+	"github.com/caligone/openqiara/internal/hksv"
 )
 
 // The camera accessory carries HomeKit Secure Video's services as iOS
@@ -68,5 +72,37 @@ func TestCameraHasRecordingServices(t *testing.T) {
 		if !slices.Equal(perms[typ], want) {
 			t.Errorf("characteristic %s: perms %v, want %v", typ, perms[typ], want)
 		}
+	}
+}
+
+// A recording is refused until recording is on and iOS chose a
+// configuration, which survive a restart.
+func TestRecordingStateSurvivesRestart(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store := hap.NewMemStore()
+	cam := NewHomeKitCamera(CameraConfig{Enabled: true}, logger)
+	cam.rec.setStore(store)
+	if _, reason := cam.rec.openRecording(); reason != hksv.ReasonNotAllowed {
+		t.Fatalf("recording off: reason %d", reason)
+	}
+
+	// What iOS writes: recording on, a configuration (prebuffer, H.264).
+	req := httptest.NewRequest("PUT", "/characteristics", nil)
+	cam.rec.active.SetValueRequest(1, req)
+	selected := []byte{0x01, 0x06, 0x01, 0x04, 0xa0, 0x0f, 0, 0, 0x02, 0x03, 0x01, 0x01, 0x00}
+	cam.rec.mgmt.SelectedCameraRecordingConfiguration.SetValueRequest(base64.StdEncoding.EncodeToString(selected), req)
+	if record, reason := cam.rec.openRecording(); record == nil {
+		t.Fatalf("refused: reason %d", reason)
+	}
+	cam.rec.recorder.SetActive(false)
+
+	restarted := NewHomeKitCamera(CameraConfig{Enabled: true}, logger)
+	if _, reason := restarted.rec.openRecording(); reason != hksv.ReasonNotAllowed {
+		t.Fatalf("fresh camera: reason %d", reason)
+	}
+	restarted.rec.setStore(store)
+	defer restarted.rec.recorder.SetActive(false)
+	if record, reason := restarted.rec.openRecording(); record == nil {
+		t.Fatalf("after restart: reason %d", reason)
 	}
 }

@@ -197,8 +197,27 @@ func (h *Hub) broadcast(sample camera.Sample) {
 	}
 }
 
-// runPipeline runs the source once and broadcasts each sample.
+// restartDelay spaces the source's restarts after it failed.
+const restartDelay = time.Second
+
+// runPipeline runs the source and broadcasts each sample. A source that
+// fails is started again while someone listens: a subscriber that stays
+// (HomeKit Secure Video's prebuffer) would otherwise keep a dead pipeline
+// for everyone.
 func (h *Hub) runPipeline(ctx context.Context) {
+	for {
+		h.runSource(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(restartDelay):
+			h.log.Info("mediahub: restarting the source", "source", h.name)
+		}
+	}
+}
+
+// runSource runs the source once.
+func (h *Hub) runSource(ctx context.Context) {
 	if h.resumer != nil {
 		h.resumer.ResumeIfStale(ctx)
 	}

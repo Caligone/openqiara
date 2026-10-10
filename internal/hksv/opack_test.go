@@ -26,11 +26,11 @@ func TestEncodeHelloHeader(t *testing.T) {
 func TestRoundTrip(t *testing.T) {
 	long := bytes.Repeat([]byte{1}, 300)
 	in := map[string]any{
-		"streamId": int64(1234),
+		"streamId":    int64(1234),
 		"endOfStream": true,
-		"neg": int64(-1),
-		"big": int64(1 << 40),
-		"f": 1.5,
+		"neg":         int64(-1),
+		"big":         int64(1 << 40),
+		"f":           1.5,
 		"packets": []any{
 			map[string]any{"data": long, "metadata": map[string]any{"dataType": "mediaFragment", "dataSequenceNumber": int64(1)}},
 		},

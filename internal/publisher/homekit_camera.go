@@ -58,6 +58,18 @@ type HomeKitCamera struct {
 // première session HK : sans lui, pas de flux.
 func (c *HomeKitCamera) SetMediaHub(h *mediahub.Hub) {
 	c.hub = h
+	c.rec.recorder.SetHub(h)
+}
+
+// replace takes over from the camera of a previous build: its media hub,
+// set once at startup, and its recording, stopped so that it lets go of
+// the hub and its data stream port.
+func (c *HomeKitCamera) replace(prev *HomeKitCamera) {
+	prev.rec.recorder.SetActive(false)
+	prev.rec.stream.Close()
+	if prev.hub != nil {
+		c.SetMediaHub(prev.hub)
+	}
 }
 
 // cameraSession tracks the state of a single live-streaming session
