@@ -6,12 +6,20 @@ import (
 	"log/slog"
 	"slices"
 	"testing"
+
+	"github.com/brutella/hap"
+	"github.com/brutella/hap/accessory"
 )
 
 // The camera accessory carries HomeKit Secure Video's services as iOS
 // expects them (HAP-NodeJS ServiceDefinitions.ts).
 func TestCameraHasRecordingServices(t *testing.T) {
 	cam := NewHomeKitCamera(CameraConfig{Enabled: true}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	// The server numbers the services: links point at those ids.
+	bridge := accessory.NewBridge(accessory.Info{Name: "bridge"})
+	if _, err := hap.NewServer(hap.NewMemStore(), bridge.A, cam.Accessory().A); err != nil {
+		t.Fatal(err)
+	}
 	b, err := json.Marshal(cam.Accessory().A)
 	if err != nil {
 		t.Fatal(err)
@@ -39,9 +47,9 @@ func TestCameraHasRecordingServices(t *testing.T) {
 			t.Fatalf("service %s missing", typ)
 		}
 	}
-	mgmt, stream := acc.Services[byType["204"]], acc.Services[byType["129"]]
-	if !slices.Contains(mgmt.Linked, stream.IID) {
-		t.Fatal("recording management not linked to the data stream service")
+	mgmt, stream, motion := acc.Services[byType["204"]], acc.Services[byType["129"]], acc.Services[byType["85"]]
+	if !slices.Contains(mgmt.Linked, stream.IID) || !slices.Contains(mgmt.Linked, motion.IID) {
+		t.Fatal("recording management not linked to the data stream service and the motion sensor")
 	}
 	perms := map[string][]string{}
 	for _, s := range acc.Services {

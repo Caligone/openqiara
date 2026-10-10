@@ -103,7 +103,19 @@ func newRecording(acc *accessory.Camera, logger *slog.Logger) *recording {
 	stream.AddC(version.C)
 	r.mgmt.AddS(stream)
 
+	// The trigger: linked to the recording service and active, as
+	// HAP-NodeJS does; the home hub turned the camera down without it.
 	r.motion = service.NewMotionSensor()
+	statusActive := characteristic.NewStatusActive()
+	statusActive.SetValue(true)
+	r.motion.AddC(statusActive.C)
+	r.mgmt.AddS(r.motion.S)
+
+	// The live stream's own switch, which HAP-NodeJS gives every stream
+	// management service of a recording camera.
+	streamActive := characteristic.NewActive()
+	_ = streamActive.SetValue(characteristic.ActiveActive)
+	acc.StreamManagement1.AddC(streamActive.C)
 
 	acc.AddS(r.mgmt.S)
 	acc.AddS(mode)
