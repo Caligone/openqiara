@@ -3,7 +3,9 @@ module github.com/caligone/openqiara
 go 1.26.1
 
 require (
+	github.com/bluenviron/gohlslib/v2 v2.4.6
 	github.com/bluenviron/gortsplib/v5 v5.6.1
+	github.com/bluenviron/mediacommon/v2 v2.9.6
 	github.com/brutella/hap v0.0.35
 	github.com/eclipse/paho.mqtt.golang v1.5.1
 	github.com/hashicorp/mdns v1.0.6
@@ -17,8 +19,6 @@ require (
 	github.com/abema/go-mp4 v1.7.3 // indirect
 	github.com/asticode/go-astikit v0.30.0 // indirect
 	github.com/asticode/go-astits v1.16.0 // indirect
-	github.com/bluenviron/gohlslib/v2 v2.4.6 // indirect
-	github.com/bluenviron/mediacommon/v2 v2.9.6 // indirect
 	github.com/brutella/dnssd v1.2.14 // indirect
 	github.com/go-chi/chi v1.5.4 // indirect
 	github.com/google/uuid v1.6.0 // indirect
