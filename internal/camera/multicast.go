@@ -19,7 +19,6 @@ import (
 const (
 	MulticastGroup     = "224.0.0.1"
 	MulticastVideoMain = 9600
-	MulticastVideoLow  = 9602 // 640x360, for the home hub's analysis streams
 	MulticastAudio     = 9700
 	MulticastJPEG      = 9610
 )

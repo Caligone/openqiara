@@ -226,16 +226,8 @@ func main() {
 	// hours (feedback_hlcamd_freeze_after_hours.md): the resumer wakes it
 	// when the hub's samples stop.
 	var mediaHub *mediahub.Hub
-	var mediaHubLow *mediahub.Hub // 640x360, for small HomeKit requests
-	hlcamdResumer := camera.NewHlcamdResumer(func() time.Time {
-		last := mediaHub.LastSample()
-		if t := mediaHubLow.LastSample(); t.After(last) {
-			last = t
-		}
-		return last
-	}, 10*time.Second, 5*time.Second, logger)
+	hlcamdResumer := camera.NewHlcamdResumer(func() time.Time { return mediaHub.LastSample() }, 10*time.Second, 5*time.Second, logger)
 	mediaHub = mediahub.New("multicast 1080p + audio", mediahub.Multicast(camera.MulticastVideoMain, camera.MulticastAudio, logger), hlcamdResumer, logger)
-	mediaHubLow = mediahub.New("multicast 360p + audio", mediahub.Multicast(camera.MulticastVideoLow, camera.MulticastAudio, logger), hlcamdResumer, logger)
 	hlsSrv := hlsserver.New(mediaHub, true, logger)
 
 	// The video pipeline follows the privacy shutter (#50): paused while
@@ -441,7 +433,6 @@ func main() {
 	}
 	if hkPub != nil && hkPub.Camera() != nil {
 		hkPub.Camera().SetMediaHub(mediaHub)
-		hkPub.Camera().SetLowHub(mediaHubLow)
 	}
 
 	// OTA updater — interroge GitHub Releases pour proposer des

@@ -46,10 +46,6 @@ type HomeKitCamera struct {
 	// hub est le pipeline média partagé (SetMediaHub) : chaque session
 	// s'y abonne. Il réveille hlcamd si son flux s'est figé.
 	hub *mediahub.Hub
-	// low is the 640x360 stream (SetLowHub): sessions asking for that
-	// size or less get it. The HomePod home hub asks 640x360 to analyze
-	// motion and gave up within seconds on 1080p (2026-10-10).
-	low *mediahub.Hub
 
 	rec *recording // HomeKit Secure Video services
 
@@ -64,17 +60,11 @@ func (c *HomeKitCamera) SetMediaHub(h *mediahub.Hub) {
 	c.rec.recorder.SetHub(h)
 }
 
-// SetLowHub attaches the 640x360 stream's media hub.
-func (c *HomeKitCamera) SetLowHub(h *mediahub.Hub) {
-	c.low = h
-}
-
 // cameraSession tracks the state of a single live-streaming session
 // negotiated through SetupEndpoints + SelectedRTPStreamConfiguration.
 // One session per active iOS viewer.
 type cameraSession struct {
-	id    []byte // session identifier echoed back by iOS
-	width int    // video width iOS asked for
+	id []byte // session identifier echoed back by iOS
 
 	// Controller (iOS) endpoint
 	controllerIP   net.IP
@@ -340,9 +330,6 @@ func (c *HomeKitCamera) onSelectedRTPStreamConfiguration(buf []byte) {
 		if req.Audio.CodecType != rtp.AudioCodecType_AAC_ELD {
 			c.log.Warn("camera: iOS chose an audio codec we don't send, no sound", "codec", req.Audio.CodecType)
 		}
-		if req.Video.Attributes.Width != 0 {
-			sess.width = int(req.Video.Attributes.Width)
-		}
 		if err := c.startStreaming(sess, req.Video.RTP.PayloadType, req.Audio.RTP.PayloadType); err != nil {
 			c.log.Error("camera: failed to start streaming", "error", err)
 		}
@@ -360,9 +347,6 @@ func (c *HomeKitCamera) onSelectedRTPStreamConfiguration(buf []byte) {
 
 	case rtp.SessionControlCommandTypeResume:
 		c.log.Info("camera: stream RESUME", "session", base64.StdEncoding.EncodeToString(sess.id))
-		if req.Video.Attributes.Width != 0 {
-			sess.width = int(req.Video.Attributes.Width)
-		}
 		if err := c.startStreaming(sess, req.Video.RTP.PayloadType, req.Audio.RTP.PayloadType); err != nil {
 			c.log.Error("camera: failed to resume streaming", "error", err)
 		}
@@ -370,9 +354,6 @@ func (c *HomeKitCamera) onSelectedRTPStreamConfiguration(buf []byte) {
 	case rtp.SessionControlCommandTypeReconfigure:
 		c.log.Info("camera: stream RECONFIGURE", "session", base64.StdEncoding.EncodeToString(sess.id))
 		c.stopStreaming(sess)
-		if req.Video.Attributes.Width != 0 {
-			sess.width = int(req.Video.Attributes.Width)
-		}
 		if err := c.startStreaming(sess, req.Video.RTP.PayloadType, req.Audio.RTP.PayloadType); err != nil {
 			c.log.Error("camera: failed to reconfigure streaming", "error", err)
 		}
@@ -473,11 +454,7 @@ func (c *HomeKitCamera) startStreaming(sess *cameraSession, videoPT, audioPT uin
 		audioSender.RunSilence(ctx)
 	}()
 
-	hub := c.hub
-	if c.low != nil && sess.width > 0 && sess.width <= 640 {
-		hub = c.low
-	}
-	sub := hub.Subscribe()
+	sub := c.hub.Subscribe()
 	sampleCh := sub.Samples()
 	sess.wg.Add(1)
 	go func() {
