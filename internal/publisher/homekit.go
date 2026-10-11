@@ -39,7 +39,7 @@ type HomeKitConfig struct {
 //
 //	1               = bridge (HAP convention)
 //	aidAlarm        = security system (KPD/alarm) — fixed, max 1 per bridge
-//	aidCamera       = camera accessory — fixed, max 1 per bridge
+//	11              = the camera, bridged up to rc.18: never reuse it
 //	aidSensorBase+ID = DWS / PIR / SRN sensors — derived from sensor.ID
 //
 // The +1000 offset on sensors leaves room for fixed-AID accessories and
@@ -47,7 +47,6 @@ type HomeKitConfig struct {
 // (typical IDs observed: 12, 17, 23 — well within range).
 const (
 	aidAlarm      uint64 = 10
-	aidCamera     uint64 = 11
 	aidShutter    uint64 = 12
 	aidSensorBase uint64 = 1000
 )
@@ -490,8 +489,8 @@ func (p *HomeKitPublisher) startCamera() error {
 	server.Ifaces = []string{"ssv0"}
 	server.Responder = p.responder
 	p.camera.setSessionSecrets(server.SharedSecret)
-	// What iOS chose for recording is kept with the bridge's state.
-	p.camera.rec.setStore(hap.NewFsStore(p.cfg.DataDir))
+	// What iOS chose for recording goes with the camera's pairing.
+	p.camera.rec.setStore(hap.NewFsStore(dir))
 	// Snapshots: Home asks for one with POST /resource (camera tile,
 	// HomeKit Secure Video's event snapshots); hap has no route for it.
 	server.ServeMux().HandleFunc("/resource", func(w http.ResponseWriter, r *http.Request) {

@@ -86,6 +86,7 @@ func (d *DataSend) Serve(c *Conn) {
 		if cur != nil {
 			cur.end()
 			cur.cancel()
+			_ = c.Close() // unblocks a write in progress
 			<-cur.done
 		}
 	}()
@@ -155,6 +156,9 @@ func (d *DataSend) openStream(c *Conn, h, m map[string]any) *stream {
 func (d *DataSend) send(ctx context.Context, c *Conn, s *stream, record RecordFunc) {
 	seq := int64(1) // the init segment is 1, fragments follow
 	err := record(ctx, func(data []byte, last bool) error {
+		if err := ctx.Err(); err != nil {
+			return err // the hub closed the stream: nothing more for it
+		}
 		kind := packetFragment
 		if seq == 1 {
 			kind = packetInit

@@ -199,3 +199,29 @@ func TestEndOfStreamAcked(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 }
+
+// Once the hub closes the stream, nothing more goes out for it.
+func TestNoDataAfterClose(t *testing.T) {
+	late := make(chan error, 1)
+	open := func() (RecordFunc, int) {
+		return func(ctx context.Context, emit func([]byte, bool) error) error {
+			<-ctx.Done()
+			err := emit([]byte("fragment"), false)
+			late <- err
+			return err
+		}, 0
+	}
+	ds := NewDataStream(NewDataSend(open, quiet).Serve, quiet)
+	defer ds.Close()
+	c := dial(t, ds)
+	c.open(2, 1)
+	c.send(map[string]any{"protocol": "dataSend", "event": "close"}, map[string]any{"streamId": int64(1), "reason": int64(0)})
+	select {
+	case err := <-late:
+		if err == nil {
+			t.Fatal("data sent after the hub closed the stream")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("recording not cancelled")
+	}
+}

@@ -417,9 +417,10 @@ func main() {
 			} else {
 				delete(inSight, det.ObjectID)
 			}
-			motion := len(inSight) > 0
+			// Under the lock: sinks run in their own goroutines, and a
+			// late SetMotion(true) would leave the sensor stuck.
+			hkCam.SetMotion(len(inSight) > 0)
 			inSightMu.Unlock()
-			hkCam.SetMotion(motion)
 		}
 	}, 30*time.Second)
 	go serveEventCollector(ctx, ivDispatcher, logger)

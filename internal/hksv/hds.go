@@ -25,7 +25,10 @@ import (
 
 const (
 	prepareTimeout = 10 * time.Second
+	writeTimeout   = 5 * time.Second
 	maxFrame       = 1<<20 - 1
+	maxHello       = 4 << 10 // a hello is ~50 bytes: refuse more before authentication
+	maxUnmatched   = 4       // connections not yet matched to a session
 )
 
 // DataStream accepts iOS's data stream connections.
@@ -33,9 +36,10 @@ type DataStream struct {
 	log    *slog.Logger
 	handle func(*Conn) // a connection that said hello
 
-	mu      sync.Mutex
-	ln      net.Listener
-	pending []*prepared
+	mu        sync.Mutex
+	ln        net.Listener
+	pending   []*prepared
+	unmatched int
 }
 
 type prepared struct {
@@ -133,8 +137,21 @@ func (s *DataStream) accept(ln net.Listener) {
 // serve matches a connection to a prepared session by its first frame,
 // which must be the hello, then hands it over.
 func (s *DataStream) serve(nc net.Conn) {
+	s.mu.Lock()
+	full := s.unmatched >= maxUnmatched
+	if !full {
+		s.unmatched++
+	}
+	s.mu.Unlock()
+	if full {
+		_ = nc.Close()
+		return
+	}
 	_ = nc.SetReadDeadline(time.Now().Add(prepareTimeout))
-	header, body, err := readFrame(nc)
+	header, body, err := readFrame(nc, maxHello)
+	s.mu.Lock()
+	s.unmatched--
+	s.mu.Unlock()
 	if err != nil {
 		s.log.Warn("hds: no first frame", "error", err)
 		_ = nc.Close()
@@ -194,9 +211,9 @@ type Conn struct {
 	writeN uint64
 }
 
-// readFrame reads one frame: a 4-byte header (type 1, 24-bit big-endian
-// plaintext length), the ciphertext and its 16-byte tag.
-func readFrame(r io.Reader) (header, body []byte, err error) {
+// readFrame reads one frame of at most limit bytes: a 4-byte header (type 1,
+// 24-bit big-endian plaintext length), the ciphertext and its 16-byte tag.
+func readFrame(r io.Reader, limit int) (header, body []byte, err error) {
 	header = make([]byte, 4)
 	if _, err := io.ReadFull(r, header); err != nil {
 		return nil, nil, err
@@ -205,7 +222,7 @@ func readFrame(r io.Reader) (header, body []byte, err error) {
 		return nil, nil, fmt.Errorf("hds: frame type %d", header[0])
 	}
 	n := int(header[1])<<16 | int(header[2])<<8 | int(header[3])
-	if n > maxFrame {
+	if n > limit {
 		return nil, nil, errors.New("hds: frame too long")
 	}
 	body = make([]byte, n+16)
@@ -250,7 +267,7 @@ func (c *Conn) decodePayload(p []byte) (map[string]any, map[string]any, error) {
 
 // Read returns the next message: its header and its body.
 func (c *Conn) Read() (map[string]any, map[string]any, error) {
-	header, body, err := readFrame(c.nc)
+	header, body, err := readFrame(c.nc, maxFrame)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -287,6 +304,9 @@ func (c *Conn) send(header, body map[string]any) error {
 	defer c.wmu.Unlock()
 	frame := aead.Seal(append([]byte(nil), fh...), nonce(c.writeN), payload, fh)
 	c.writeN++
+	// A hub gone mid-recording would block the write for the TCP
+	// retransmission timeout (~15 min), keeping the camera busy.
+	_ = c.nc.SetWriteDeadline(time.Now().Add(writeTimeout))
 	_, err = c.nc.Write(frame)
 	return err
 }

@@ -34,7 +34,7 @@ func (c *controller) send(header, body map[string]any) {
 
 func (c *controller) recv() (map[string]any, map[string]any) {
 	_ = c.nc.SetReadDeadline(time.Now().Add(2 * time.Second))
-	fh, body, err := readFrame(c.nc)
+	fh, body, err := readFrame(c.nc, maxFrame)
 	if err != nil {
 		c.t.Fatal(err)
 	}
@@ -112,5 +112,31 @@ func TestDataStreamHelloThenRequest(t *testing.T) {
 	_ = nc.SetReadDeadline(time.Now().Add(time.Second))
 	if _, err := nc.Read(make([]byte, 1)); err == nil {
 		t.Fatal("stranger got an answer")
+	}
+}
+
+// Before authentication, a frame larger than a hello is refused, not
+// buffered.
+func TestOversizedFirstFrame(t *testing.T) {
+	ds := NewDataStream(func(*Conn) {}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	defer ds.Close()
+	salt := make([]byte, 32)
+	resp, err := ds.Setup(encode(item{0x01, u8(0)}, item{0x02, u8(0)}, item{0x03, salt}), [32]byte{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, _ := decode(resp)
+	params, _ := decode(first(items, 0x02))
+	nc, err := net.Dial("tcp", "127.0.0.1:"+strconv.Itoa(int(binary.LittleEndian.Uint16(first(params, 0x01)))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer nc.Close()
+	if _, err := nc.Write([]byte{1, 0x0f, 0xff, 0xff}); err != nil {
+		t.Fatal(err)
+	}
+	_ = nc.SetReadDeadline(time.Now().Add(time.Second))
+	if _, err := nc.Read(make([]byte, 1)); err != io.EOF {
+		t.Fatalf("connection kept open: %v", err)
 	}
 }
