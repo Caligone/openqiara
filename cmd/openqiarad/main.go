@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -386,23 +387,43 @@ func main() {
 				logger.Warn("mqtt: publish IV initial state failed", "kind", kind, "error", err)
 			}
 		}
-
-		ivDispatcher := hlevents.NewDispatcher(logger, func(det hlevents.Detection) {
-			kind := "human"
-			if det.Class == hlevents.IVClassPet {
-				kind = "pet"
-			} else if det.Class != hlevents.IVClassHuman {
-				// Classe inconnue (jamais observée en live) : skip.
-				return
-			}
+	}
+	// The camera's HomeKit motion sensor (HomeKit Secure Video's trigger)
+	// is on while anyone, person or pet, is in sight.
+	var hkCam *publisher.HomeKitCamera
+	if hkPub != nil {
+		hkCam = hkPub.Camera()
+	}
+	var inSightMu sync.Mutex
+	inSight := map[string]bool{}
+	ivDispatcher := hlevents.NewDispatcher(logger, func(det hlevents.Detection) {
+		kind := "human"
+		if det.Class == hlevents.IVClassPet {
+			kind = "pet"
+		} else if det.Class != hlevents.IVClassHuman {
+			// Classe inconnue (jamais observée en live) : skip.
+			return
+		}
+		if mqttPub != nil {
 			if err := mqttPub.HAPublisher().PublishIVDetection(ctx, kind, det.Present, det.Confidence, det.ObjectID); err != nil {
 				logger.Warn("mqtt: publish IV detection failed",
 					"kind", kind, "present", det.Present, "error", err)
 			}
-		}, 30*time.Second)
-
-		go serveEventCollector(ctx, ivDispatcher, logger)
-	}
+		}
+		if hkCam != nil {
+			inSightMu.Lock()
+			if det.Present {
+				inSight[det.ObjectID] = true
+			} else {
+				delete(inSight, det.ObjectID)
+			}
+			// Under the lock: sinks run in their own goroutines, and a
+			// late SetMotion(true) would leave the sensor stuck.
+			hkCam.SetMotion(len(inSight) > 0)
+			inSightMu.Unlock()
+		}
+	}, 30*time.Second)
+	go serveEventCollector(ctx, ivDispatcher, logger)
 
 	// hlcamdResumer + mediaHub sont créés plus haut (avant HomeKit/RTSP).
 	// On les branche ici sur les consommateurs dont le handle n'existe

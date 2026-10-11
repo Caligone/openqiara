@@ -90,6 +90,5 @@ Le shutter est contrôlé via le canal charmux Shutter (port 8006).
 ## Limitations
 
 - **Latence HLS ~3-4 s** : inhérente au protocole ; RTSP et HomeKit sont bien plus réactifs
-- **Pas de HKSV** : HomeKit Secure Video (enregistrement) non implémenté
 - **Son** : demande la libfdk-aac de la caméra et un binaire compilé avec CGo (release, `make daemon`)
 - **Shutter + hlcamd conflit** : hlcamd occupe le port Shutter 8007. openqiarad contourne en envoyant via UDP sans bind.

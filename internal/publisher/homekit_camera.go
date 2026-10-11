@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"sync"
+	"time"
 
 	"github.com/brutella/hap/accessory"
 	"github.com/brutella/hap/rtp"
@@ -45,6 +47,8 @@ type HomeKitCamera struct {
 	// s'y abonne. Il réveille hlcamd si son flux s'est figé.
 	hub *mediahub.Hub
 
+	rec *recording // HomeKit Secure Video services
+
 	mu       sync.Mutex
 	sessions map[string]*cameraSession // keyed by session id (base64)
 }
@@ -53,6 +57,7 @@ type HomeKitCamera struct {
 // première session HK : sans lui, pas de flux.
 func (c *HomeKitCamera) SetMediaHub(h *mediahub.Hub) {
 	c.hub = h
+	c.rec.recorder.SetHub(h)
 }
 
 // cameraSession tracks the state of a single live-streaming session
@@ -114,6 +119,8 @@ func NewHomeKitCamera(cfg CameraConfig, logger *slog.Logger) *HomeKitCamera {
 		Firmware:     "0.1.0",
 	})
 
+	cam.rec = newRecording(cam.acc, logger)
+
 	// Publish the supported codec configurations once. iOS reads these
 	// to know what we can do (resolutions, codecs, framerates).
 	cam.publishStaticConfigs()
@@ -123,6 +130,35 @@ func NewHomeKitCamera(cfg CameraConfig, logger *slog.Logger) *HomeKitCamera {
 	cam.acc.StreamManagement1.SelectedRTPStreamConfiguration.OnValueRemoteUpdate(cam.onSelectedRTPStreamConfiguration)
 
 	return cam
+}
+
+// serveSnapshot answers POST /resource with the camera's next JPEG
+// (hlcamd's 1280x720, one a second). Home asks for a size; it scales what
+// it gets.
+func (c *HomeKitCamera) serveSnapshot(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	jpeg, err := camera.MulticastSnapshot(ctx, camera.MulticastJPEG, c.log)
+	if err != nil {
+		c.log.Debug("camera: no snapshot", "error", err)
+		http.Error(w, "", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "image/jpeg")
+	_, _ = w.Write(jpeg)
+}
+
+// setSessionSecrets gives the camera access to the HAP sessions' secrets,
+// which HomeKit Secure Video's data stream derives its keys from.
+func (c *HomeKitCamera) setSessionSecrets(secret func(addr string) ([32]byte, bool)) {
+	c.rec.secret = secret
+}
+
+// SetMotion reports whether someone is in front of the camera (person or
+// pet detection): the camera's motion sensor, which triggers HomeKit
+// Secure Video.
+func (c *HomeKitCamera) SetMotion(on bool) {
+	c.rec.setMotion(on)
 }
 
 // Accessory returns the underlying HAP accessory so the publisher can

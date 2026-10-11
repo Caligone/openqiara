@@ -21,7 +21,7 @@
 | Alarme | SecuritySystem | CurrentState/TargetState — limité via `ValidVals` à 3 modes : `AwayArm`, `NightArm`, `Disarmed`. `AlarmTriggered` apparaît automatiquement quand l'engine passe en `triggered`. Exposé en mode standalone même sans KPD pairé. |
 | SRN | Switch | On (bool) — pas de type Siren natif dans HomeKit |
 | Shutter | Switch | On (bool) |
-| Caméra | IPCamera (H.264 / SRTP) | Flux live 1080p et son du micro (AAC-ELD), sans ffmpeg (voir plus bas) |
+| Caméra | IPCamera, **accessoire à part** (port 51828) | Flux live 1080p et son du micro (AAC-ELD), sans ffmpeg ; enregistrement HomeKit Secure Video (voir plus bas) |
 
 ## Architecture
 
@@ -38,6 +38,9 @@ Capteurs → Core → Publisher MQTT    → HA (MQTT)
 2. Reboot openqiarad
 3. Sur iPhone : Maison → Ajouter un accessoire → Code manuel → `001-02-003`
 4. Le bridge "OpenQiara" apparaît avec tous les capteurs
+5. Ajouter de même la caméra (accessoire séparé, **même code**) : elle n'est pas dans le bridge, car derrière un bridge le concentrateur n'ouvre jamais l'enregistrement HKSV
+
+**Mise à jour depuis la rc.18 ou avant** : la caméra était dans le bridge. Elle en disparaît (pièce, scènes et automatisations liées à supprimer ou refaire), et doit être ajoutée comme nouvel accessoire, avec le même code. Côté HA, l'entité HomeKit Controller de la caméra change aussi.
 
 HA découvre aussi le bridge via l'intégration HomeKit Controller (mDNS/Bonjour).
 
@@ -48,9 +51,8 @@ HA découvre aussi le bridge via l'intégration HomeKit Controller (mDNS/Bonjour
 
 ## Limitations
 
-- **Pas de HomeKit Secure Video (HKSV)** : enregistrement cloud non implémenté.
 - **Pas de type Siren** : HomeKit n'a pas de service Siren natif. La SRN est exposée comme un Switch.
-- **Persistance** : le store HomeKit est dans `/data/homekit/`. Si le répertoire est supprimé, il faut re-appairer.
+- **Persistance** : le store HomeKit du bridge est dans `/data/homekit/`, celui de la caméra (appairage et réglages d'enregistrement) dans `/data/homekit/camera/`. Si un répertoire est supprimé, il faut re-appairer l'accessoire correspondant.
 
 ## Streaming caméra
 
@@ -66,6 +68,14 @@ Le son suit le même chemin : `hlcamd` envoie le micro en PCM brut (16 kHz mono)
 
 La vue web lit le HLS qu'openqiarad mux lui-même à partir du même flux (voir [`video.md`](video.md)). `hlcamd` est relancé avec `--use-h264` au boot (cf [`../scripts/camera_boot.sh`](../scripts/camera_boot.sh)).
 
+## HomeKit Secure Video
+
+Requiert un concentrateur Maison (HomePod, Apple TV, iPad) et un abonnement iCloud+. Dans Maison : caméra → Réglages → Enregistrement et notifications, puis « Diffuser et autoriser l'enregistrement » selon le mode (domicile / absent).
+
+- **Déclenchement** : le capteur de mouvement de la caméra, alimenté par la détection IV d'`hlcamd` (humain ou animal).
+- **Préenregistrement** : openqiarad garde en mémoire les dernières secondes du flux 1080p (au plus 8 Mo), pour que le clip commence avant le mouvement.
+- **Transport** : le concentrateur ouvre un HomeKit Data Stream (TCP chiffré ChaCha20-Poly1305) et reçoit des fragments fMP4 (H.264 + AAC-LC), muxés en Go. Rien ne passe par un cloud tiers : c'est le concentrateur qui chiffre et envoie à iCloud.
+
 ## Bibliothèque
 
-Utilise `github.com/brutella/hap` (Go pur, ~10-20MB RAM).
+Utilise `github.com/brutella/hap` v0.0.35 (Go pur, ~10-20MB RAM), copié dans `third_party/hap` avec quelques correctifs listés dans [`../third_party/hap/OPENQIARA.md`](../third_party/hap/OPENQIARA.md).
