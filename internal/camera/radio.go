@@ -60,7 +60,6 @@ type RadioClient struct {
 	sensors map[int]Sensor     // live state of every sensor in the config, by id
 	nodes   map[int]radio.Node // what the engine serves, by id
 	ids     map[uint32]int     // radio address → id
-	known   map[int]bool       // door or motion state reported since start
 	heard   map[int]time.Time  // last frame from the sensor, or when it began to be served
 	// sirenCounter is the counter of the siren's last frame, to drop its
 	// answers that arrive out of order.
@@ -128,7 +127,6 @@ func NewRadioClient(mcu radioMCU, store *config.Store, log *slog.Logger) *RadioC
 		FbxhomeXML:   fbxhomeXMLGlob,
 		events:       make(chan SensorEvent, 64),
 		done:         make(chan struct{}),
-		known:        make(map[int]bool),
 		heard:        make(map[int]time.Time),
 		sirenCounter: make(map[int]uint32),
 	}
@@ -477,7 +475,7 @@ func (c *RadioClient) publish(ev radio.Event) {
 		c.log.Warn("radio: frame not understood", "id", id, "value", ev.Value)
 	}
 	if report {
-		c.known[id] = true
+		s.Reported = true
 	}
 	c.sensors[id] = s
 	if report || s != before {
@@ -783,8 +781,7 @@ func (c *RadioClient) CachedSensors() []Sensor {
 }
 
 // ReadSensor returns a sensor's live state. A door or motion sensor that
-// has not reported since the start has none: publishing the default
-// would overwrite the state Home Assistant kept.
+// has not reported since the start has none (Sensor.StateKnown).
 func (c *RadioClient) ReadSensor(_ context.Context, id int) (*Sensor, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -792,7 +789,7 @@ func (c *RadioClient) ReadSensor(_ context.Context, id int) (*Sensor, error) {
 	if !ok {
 		return nil, fmt.Errorf("radio: no sensor %d", id)
 	}
-	if (s.Type == "DWS" || s.Type == "PIR") && !c.known[id] {
+	if !s.StateKnown() {
 		return nil, fmt.Errorf("radio: sensor %d has not reported its state yet", id)
 	}
 	return &s, nil

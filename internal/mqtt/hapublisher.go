@@ -433,9 +433,9 @@ func marshalState(s camera.Sensor) ([]byte, error) {
 	var v any
 	switch s.Type {
 	case "DWS":
-		v = dwsState{Open: s.Open, Battery: s.Battery, Reachable: s.Reachable, Temperature: s.Temperature}
+		v = dwsState{Open: knownState(s, s.Open), Battery: s.Battery, Reachable: s.Reachable, Temperature: s.Temperature}
 	case "PIR":
-		v = pirState{Motion: s.Motion, Battery: s.Battery, Reachable: s.Reachable, Temperature: s.Temperature}
+		v = pirState{Motion: knownState(s, s.Motion), Battery: s.Battery, Reachable: s.Reachable, Temperature: s.Temperature}
 	case "SRN":
 		v = srnState{Active: s.SirenState == "alert", State: s.SirenState, Battery: s.Battery, Reachable: s.Reachable, Temperature: s.Temperature}
 	case "KPD":
@@ -444,4 +444,15 @@ func marshalState(s camera.Sensor) ([]byte, error) {
 		return nil, fmt.Errorf("unknown sensor type: %s", s.Type)
 	}
 	return json.Marshal(v)
+}
+
+// knownState is a door or motion state as published: nil, left out, until
+// the sensor reported it after a start, so that its battery or its
+// reachability can go out without overwriting the state Home Assistant
+// kept (the value_template renders nothing, and HA leaves the entity).
+func knownState(s camera.Sensor, state bool) *bool {
+	if !s.StateKnown() {
+		return nil
+	}
+	return &state
 }

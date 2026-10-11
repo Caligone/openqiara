@@ -3,7 +3,7 @@
   "unique_id": "openqiara_dws_14",
   "device_class": "opening",
   "state_topic": "openqiara/sensor/14/state",
-  "value_template": "{{ value_json.open | lower }}",
+  "value_template": "{{ value_json.open | lower if value_json.open is defined else '' }}",
   "payload_on": "true",
   "payload_off": "false",
   "json_attributes_topic": "openqiara/sensor/14/state",

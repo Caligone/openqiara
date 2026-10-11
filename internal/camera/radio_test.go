@@ -545,6 +545,25 @@ func TestRadioBackPublishesFreshState(t *testing.T) {
 	}
 }
 
+// TestRadioDoorStateOnlyOnceReported: after a start, a door has no state
+// until it reports one. Its heartbeat goes out without making one up, as
+// closed; its report sets it, and a reload of the config keeps it.
+func TestRadioDoorStateOnlyOnceReported(t *testing.T) {
+	c, mcu, _ := newRadio(t, dws)
+	mcu.rx(fromSensor(5, 10, 0x82, 0x01, 150)) // heartbeat: its battery only
+	if ev := nextEvent(t, c); ev.SensorID != 23 || ev.Sensor.StateKnown() {
+		t.Fatalf("heartbeat event = %+v, want door 23 with no state", ev)
+	}
+	mcu.rx(state(5, 11, 1)) // closed
+	if ev := nextEvent(t, c); !ev.Sensor.StateKnown() || ev.Sensor.Open {
+		t.Fatalf("report event = %+v, want door 23 closed", ev)
+	}
+	c.Reload()
+	if s, err := c.ReadSensor(context.Background(), 23); err != nil || !s.StateKnown() {
+		t.Errorf("after a reload: %+v, %v, want the reported state kept", s, err)
+	}
+}
+
 // TestBatteryPercent: the raw level as fbxhome showed it.
 func TestBatteryPercent(t *testing.T) {
 	for _, tc := range []struct {

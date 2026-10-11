@@ -67,7 +67,7 @@ func TestBuildDiscoveryPayload_DWS(t *testing.T) {
 	if p.StateTopic != "openqiara/sensor/33/state" {
 		t.Errorf("state_topic = %q", p.StateTopic)
 	}
-	if p.ValueTemplate != "{{ value_json.open | lower }}" {
+	if p.ValueTemplate != "{{ value_json.open | lower if value_json.open is defined else '' }}" {
 		t.Errorf("value_template = %q", p.ValueTemplate)
 	}
 	if p.Device.Manufacturer != "Qiara/Cofidur" {
@@ -90,7 +90,7 @@ func TestBuildDiscoveryPayload_CustomPrefix(t *testing.T) {
 }
 
 func TestMarshalState_DWS(t *testing.T) {
-	s := camera.Sensor{ID: 33, Type: "DWS", Open: true, Battery: 85, Reachable: true}
+	s := camera.Sensor{ID: 33, Type: "DWS", Open: true, Reported: true, Battery: 85, Reachable: true}
 	data, err := marshalState(s)
 	if err != nil {
 		t.Fatal(err)
@@ -100,8 +100,8 @@ func TestMarshalState_DWS(t *testing.T) {
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatal(err)
 	}
-	if !got.Open {
-		t.Error("expected open=true")
+	if got.Open == nil || !*got.Open {
+		t.Errorf("open = %v, want true", got.Open)
 	}
 	if got.Battery != 85 {
 		t.Errorf("battery = %d, want 85", got.Battery)
@@ -112,7 +112,7 @@ func TestMarshalState_DWS(t *testing.T) {
 }
 
 func TestMarshalState_PIR(t *testing.T) {
-	s := camera.Sensor{ID: 7, Type: "PIR", Motion: true, Battery: 50, Reachable: true}
+	s := camera.Sensor{ID: 7, Type: "PIR", Motion: true, Reported: true, Battery: 50, Reachable: true}
 	data, err := marshalState(s)
 	if err != nil {
 		t.Fatal(err)
@@ -122,8 +122,32 @@ func TestMarshalState_PIR(t *testing.T) {
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatal(err)
 	}
-	if !got.Motion {
-		t.Error("expected motion=true")
+	if got.Motion == nil || !*got.Motion {
+		t.Errorf("motion = %v, want true", got.Motion)
+	}
+}
+
+// TestMarshalState_UnreportedLeavesStateOut: a door or motion sensor not
+// heard since the start publishes its battery and reachability, not a
+// state: an "open": false would close, in Home Assistant, a door left open.
+func TestMarshalState_UnreportedLeavesStateOut(t *testing.T) {
+	for _, tc := range []struct {
+		typ, field string
+	}{{"DWS", "open"}, {"PIR", "motion"}} {
+		data, err := marshalState(camera.Sensor{ID: 46, Type: tc.typ, Battery: 100, Reachable: false})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got map[string]any
+		if err := json.Unmarshal(data, &got); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := got[tc.field]; ok {
+			t.Errorf("%s payload %s: %q published before any report", tc.typ, data, tc.field)
+		}
+		if got["battery"] != float64(100) || got["reachable"] != false {
+			t.Errorf("%s payload %s: want battery 100 and reachable false", tc.typ, data)
+		}
 	}
 }
 

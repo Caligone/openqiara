@@ -57,13 +57,16 @@ func buildDiscoveryPayload(prefix string, sensor camera.Sensor) (discoveryPayloa
 	uniqueID := fmt.Sprintf("openqiara_%s_%d", typeLower, sensor.ID)
 	name := sensorDisplayName(sensor)
 	st := stateTopic(prefix, sensor.ID)
+	// A state left out (a door not heard since the start) renders nothing:
+	// Home Assistant then keeps the entity as it is.
+	valueTemplate := fmt.Sprintf("{{ value_json.%[1]s | lower if value_json.%[1]s is defined else '' }}", meta.stateField)
 
 	p := discoveryPayload{
 		Name:                   name,
 		UniqueID:               uniqueID,
 		DeviceClass:            meta.deviceClass,
 		StateTopic:             st,
-		ValueTemplate:          fmt.Sprintf("{{ value_json.%s | lower }}", meta.stateField),
+		ValueTemplate:          valueTemplate,
 		PayloadOn:              "true",
 		PayloadOff:             "false",
 		JSONAttributesTopic:    st,
