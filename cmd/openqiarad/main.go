@@ -113,14 +113,25 @@ func main() {
 	// constatée par -race avant 2026-05-15. Helpers définis pour ne pas
 	// répéter le boilerplate Load()/Store() partout.
 	var alarmStateBox atomic.Pointer[string]
-	setAlarmState := func(s string) { alarmStateBox.Store(&s) }
+	// shutterFollow (option "shutter_follows_alarm") sees every alarm
+	// state through setAlarmState; its AlarmState never blocks, which
+	// matters as the engine calls setAlarmState under its lock.
+	shutterFollow := newShutterFollower(ctx, cam.SetShutter,
+		func() bool { return store.Get().Alarm.ShutterFollowsAlarm }, logger)
+	setAlarmState := func(s string) {
+		alarmStateBox.Store(&s)
+		shutterFollow.AlarmState(s)
+	}
 	getAlarmState := func() string {
 		if p := alarmStateBox.Load(); p != nil {
 			return *p
 		}
 		return ""
 	}
-	setAlarmState("disarmed")
+	// Initial value, before the persisted state is known: do not tell the
+	// shutter follower, it would close the shutter of an armed alarm.
+	disarmed := "disarmed"
+	alarmStateBox.Store(&disarmed)
 
 	// Command handler shared by all publishers
 	cmds := &publisher.CommandHandler{

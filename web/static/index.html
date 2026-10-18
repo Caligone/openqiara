@@ -233,6 +233,9 @@ a { color: var(--primary); }
         <label>Durée de l'alarme (s) <span style="color:var(--text-muted);font-size:12px">510 s au plus</span></label>
         <input type="number" id="cfg-wail-duration" min="1" max="510" step="1">
       </div>
+      <div class="form-group">
+        <label><input type="checkbox" id="cfg-shutter-follows-alarm"> Ouvrir le cache à l'armement et le fermer au désarmement</label>
+      </div>
       <p style="color:var(--text-muted);font-size:12px">En mode Alarmo, ces délais ne servent que si la caméra tombe en panne : la sirène armée prend alors le relais. Réglez-les comme ceux d'Alarmo.</p>
       <hr style="border:none;border-top:1px solid var(--border);margin:20px 0">
 
@@ -789,6 +792,7 @@ async function loadConfig() {
       document.getElementById('cfg-arming-delay').value = d.alarm.arming_delay_seconds ?? 60;
       document.getElementById('cfg-pending-delay').value = d.alarm.pending_delay_seconds ?? 60;
       document.getElementById('cfg-wail-duration').value = d.alarm.wail_duration_seconds ?? 300;
+      document.getElementById('cfg-shutter-follows-alarm').checked = !!d.alarm.shutter_follows_alarm;
       window.currentAlarmMode = mode;
     }
     const alarmMode = (d.alarm && d.alarm.mode) || 'standalone';
@@ -881,6 +885,7 @@ document.getElementById('cfg-save-all').addEventListener('click', async () => {
       arming_delay_seconds: parseInt(document.getElementById('cfg-arming-delay').value, 10),
       pending_delay_seconds: parseInt(document.getElementById('cfg-pending-delay').value, 10),
       wail_duration_seconds: parseInt(document.getElementById('cfg-wail-duration').value, 10),
+      shutter_follows_alarm: document.getElementById('cfg-shutter-follows-alarm').checked,
     })
   }));
 

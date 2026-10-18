@@ -2528,7 +2528,7 @@
       },
       "AlarmConfig": {
         "type": "object",
-        "description": "Comportement de l'alarme.\n\nEn mode `standalone`, le moteur local décide. En mode `alarmo`, Home Assistant Alarmo est la source de vérité et le moteur local est désactivé.\n\nEn lecture, les sept champs sont toujours présents : les valeurs par défaut sont appliquées à la volée.",
+        "description": "Comportement de l'alarme.\n\nEn mode `standalone`, le moteur local décide. En mode `alarmo`, Home Assistant Alarmo est la source de vérité et le moteur local est désactivé.\n\nEn lecture, les huit champs sont toujours présents : les valeurs par défaut sont appliquées à la volée.",
         "required": [
           "mode",
           "alarmo_command_topic",
@@ -2536,7 +2536,8 @@
           "siren_sounds",
           "arming_delay_seconds",
           "pending_delay_seconds",
-          "wail_duration_seconds"
+          "wail_duration_seconds",
+          "shutter_follows_alarm"
         ],
         "properties": {
           "mode": {
@@ -2582,6 +2583,11 @@
             "minimum": 1,
             "maximum": 510,
             "description": "Durée de l'alarme, comptée par la sirène par pas de 2 s (510 s au plus). Le test plein volume, lui, s'arrête à 63 s."
+          },
+          "shutter_follows_alarm": {
+            "type": "boolean",
+            "default": false,
+            "description": "Ouvre le cache de confidentialité quand l'alarme n'est pas désarmée et le ferme au désarmement."
           }
         }
       },
@@ -2632,6 +2638,11 @@
             "minimum": 1,
             "maximum": 510,
             "description": "Durée de l'alarme, comptée par la sirène par pas de 2 s (510 s au plus). Le test plein volume, lui, s'arrête à 63 s."
+          },
+          "shutter_follows_alarm": {
+            "type": "boolean",
+            "default": false,
+            "description": "Ouvre le cache de confidentialité quand l'alarme n'est pas désarmée et le ferme au désarmement."
           }
         }
       },

@@ -82,6 +82,10 @@ type AlarmConfig struct {
 	// WailDurationSeconds is how long the alert lasts, counted by the siren
 	// in 2 s steps, 510 s at most (default 300 s). 0 means "use default".
 	WailDurationSeconds int `json:"wail_duration_seconds,omitempty"`
+
+	// ShutterFollowsAlarm opens the privacy shutter whenever the alarm is not
+	// disarmed and closes it when disarmed. Off by default.
+	ShutterFollowsAlarm bool `json:"shutter_follows_alarm,omitempty"`
 }
 
 // Defaults for alarm timings, exposed so other packages don't redeclare them.
