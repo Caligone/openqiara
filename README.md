@@ -63,6 +63,7 @@ de `/data/openqiarad.log`. Les PR sont les bienvenues.
 | **Vidéo live caméra HomeKit** | ✅ (SRTP pure-Go natif, sans ffmpeg) |
 | Audio caméra HomeKit | ✅ AAC-ELD (libfdk-aac de la caméra) |
 | Web UI pour appairage & config | ✅ |
+| Alertes Telegram (photo + clip 15 s), couper la sirène, armer, état, photo/vidéo à la demande | ✅ sans désarmement à distance ([`docs/telegram.md`](docs/telegram.md)) |
 | Batterie | ⚠️ niveau réel pour la sirène seulement |
 | Température | ❌ |
 
@@ -269,6 +270,7 @@ go test ./...
 - [`docs/kpd.md`](docs/kpd.md) — détails du protocole clavier (PIN, armement/désarmement, particularités)
 - [`docs/mqtt.md`](docs/mqtt.md) — topics MQTT et discovery Home Assistant
 - [`docs/homekit.md`](docs/homekit.md) — intégration HomeKit
+- [`docs/telegram.md`](docs/telegram.md) — alertes et commandes à distance par bot Telegram
 - [`docs/api.md`](docs/api.md) — API HTTP locale (`/api/v1`)
 - [`docs/openapi.json`](docs/openapi.json) — la même en OpenAPI 3.1 : génération de client, Postman, Bruno
 - [`docs/protocol.md`](docs/protocol.md) — **référence protocole DomusRF** (pour contributeurs et curieux)
