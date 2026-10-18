@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"slices"
 	"sync"
 	"time"
 )
@@ -55,6 +56,9 @@ type persistedState struct {
 	Mode        State `json:"mode,omitempty"` // armed_away or armed_night, set while not disarmed
 	ArmedAt     int64 `json:"armed_at,omitempty"`
 	TriggeredBy int   `json:"triggered_by,omitempty"`
+	// PostSilence: the siren was silenced remotely, detection is instant
+	// until the alarm is disarmed.
+	PostSilence bool `json:"post_silence,omitempty"`
 	// PreviousState is the old name of Mode, read for files written before.
 	PreviousState State `json:"previous_state,omitempty"`
 }
@@ -108,6 +112,12 @@ const (
 	SirenAlertOver  SirenState = "alert_over" // alert ended, still set off
 )
 
+// Alert is the alarm set off, or set off again, by a sensor.
+type Alert struct {
+	SensorID int  // 0: the siren set itself off (no sensor known)
+	Again    bool // a new detection while already triggered
+}
+
 // Engine is the alarm.
 type Engine struct {
 	mu       sync.Mutex
@@ -126,10 +136,22 @@ type Engine struct {
 	// that a sensor still in alarm when the exit delay ends sets it off.
 	lastAlarm map[int]bool
 
+	// Silence: sensors that were in alarm when the siren was silenced stay
+	// ignored until they rest, so that a door left open does not set the
+	// alarm off again at once.
+	ignored map[int]bool
+	// postSilence: every sensor sets the alarm off with no entry delay,
+	// nobody being expected home, until the alarm is disarmed.
+	postSilence bool
+	// awaitSirenReset: the siren has not yet reported the re-arming after a
+	// silence, so an alert it reports is the old one, sent before.
+	awaitSirenReset bool
+
 	siren     Siren
 	path      string
 	configFor ConfigProvider
 	onChange  StateChangeCallback
+	alertHook func(Alert)
 	logger    *slog.Logger
 }
 
@@ -149,9 +171,19 @@ func New(path string, siren Siren, configFor ConfigProvider, onChange StateChang
 		onChange:     onChange,
 		logger:       logger,
 		lastAlarm:    make(map[int]bool),
+		ignored:      make(map[int]bool),
 		armingDelay:  DefaultArmingDelay,
 		pendingDelay: DefaultPendingDelay,
 	}
+}
+
+// SetAlertHook sets the function called when the alarm is set off, and at
+// each new detection while it is. fn runs under the engine's lock: it must
+// not block nor call the engine. It is not called on a silence or a disarm.
+func (e *Engine) SetAlertHook(fn func(Alert)) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.alertHook = fn
 }
 
 // SetTimings sets the exit and entry delays. 0 keeps the current value.
@@ -207,6 +239,7 @@ func (e *Engine) Load() error {
 		e.siren.Disarm()
 		return nil
 	}
+	e.postSilence = p.PostSilence
 	e.siren.Arm(e.mode == StateArmedNight, false)
 	if e.state == StatePending {
 		e.deadline = time.Now().Add(e.pendingDelay)
@@ -256,37 +289,99 @@ func (e *Engine) HandleCommand(cmd string, source Source) {
 		if cmd == "arm_night" {
 			mode = StateArmedNight
 		}
-		switch e.state {
-		case StateDisarmed:
-			e.mode, e.trigBy = mode, 0
-			delayed := source == SourceLocal
-			// Armed before any alert is sent to it: an unarmed siren
-			// ignores it.
-			e.siren.Arm(mode == StateArmedNight, delayed)
-			if !delayed {
-				e.armedLocked("armed")
-				return
-			}
-			e.transitionLocked(StateArming, "arming")
-			e.afterLocked(e.armingDelay+e.margin(), func() {
-				if e.state == StateArming {
-					e.armedLocked("exit delay over")
-				}
-			})
-		case StateArmedAway, StateArmedNight:
-			if e.state == mode {
-				return
-			}
-			e.mode = mode
-			e.transitionLocked(mode, "switch mode")
-			e.siren.Arm(mode == StateArmedNight, false)
-			e.inAlarmLocked() // night to away: a sensor now watched
-		default:
-			// Arming, pending or triggered: disarm first.
-		}
+		e.armLocked(mode, source == SourceLocal, false)
 
 	default:
 		e.logger.Warn("alarm: unknown command", "cmd", cmd)
+	}
+}
+
+// ArmResult tells what a remote arming did.
+type ArmResult string
+
+const (
+	ArmDone     ArmResult = "armed"    // armed now (from disarmed)
+	ArmSwitched ArmResult = "switched" // was armed in the other mode, now in this one
+	ArmAlready  ArmResult = "already"  // already armed in this mode: nothing done
+	ArmBusy     ArmResult = "busy"     // exit delay, entry delay or set off: nothing done
+)
+
+// ArmRemote arms from afar: no exit delay (SourceRemote). With ignoreOpen,
+// the watched sensors in alarm at that moment are ignored until they rest
+// (the same set as after Silence), instead of setting the alarm off at once.
+func (e *Engine) ArmRemote(night, ignoreOpen bool) ArmResult {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	mode := StateArmedAway
+	if night {
+		mode = StateArmedNight
+	}
+	return e.armLocked(mode, false, ignoreOpen)
+}
+
+// InAlarm returns, sorted, the sensors in alarm now that the given mode
+// watches (a night arming leaves the night-allowed ones out).
+func (e *Engine) InAlarm(night bool) []int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	var ids []int
+	for id, inAlarm := range e.lastAlarm {
+		if inAlarm && e.watchedInLocked(id, night) {
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	return ids
+}
+
+// armLocked arms the alarm in mode, or switches its mode. delayed: with the
+// exit delay. ignoreOpen: the watched sensors in alarm are ignored until
+// they rest.
+func (e *Engine) armLocked(mode State, delayed, ignoreOpen bool) ArmResult {
+	switch e.state {
+	case StateDisarmed:
+		e.mode, e.trigBy = mode, 0
+		if ignoreOpen {
+			e.ignoreInAlarmLocked()
+		}
+		// Armed before any alert is sent to it: an unarmed siren ignores it.
+		e.siren.Arm(mode == StateArmedNight, delayed)
+		if !delayed {
+			e.armedLocked("armed")
+			return ArmDone
+		}
+		e.transitionLocked(StateArming, "arming")
+		e.afterLocked(e.armingDelay+e.margin(), func() {
+			if e.state == StateArming {
+				e.armedLocked("exit delay over")
+			}
+		})
+		return ArmDone
+	case StateArmedAway, StateArmedNight:
+		if e.state == mode {
+			return ArmAlready
+		}
+		e.mode = mode
+		if ignoreOpen {
+			e.ignoreInAlarmLocked()
+		}
+		e.transitionLocked(mode, "switch mode")
+		e.siren.Arm(mode == StateArmedNight, false)
+		e.inAlarmLocked() // night to away: a sensor now watched
+		return ArmSwitched
+	default:
+		// Arming, pending or triggered: disarm first.
+		return ArmBusy
+	}
+}
+
+// ignoreInAlarmLocked ignores, until they rest, the watched sensors in alarm
+// (e.mode is already the mode to arm).
+func (e *Engine) ignoreInAlarmLocked() {
+	for id, inAlarm := range e.lastAlarm {
+		if inAlarm && e.watchedLocked(id) {
+			e.ignored[id] = true
+		}
 	}
 }
 
@@ -301,7 +396,7 @@ func (e *Engine) armedLocked(reason string) {
 // inAlarmLocked sets the alarm off for a watched sensor still in alarm.
 func (e *Engine) inAlarmLocked() {
 	for id, inAlarm := range e.lastAlarm {
-		if inAlarm && e.watchedLocked(id) {
+		if inAlarm && !e.ignored[id] && e.watchedLocked(id) {
 			e.logger.Info("alarm: sensor still in alarm once armed", "sensor_id", id)
 			e.sensorAlarmLocked(id)
 			return
@@ -319,7 +414,11 @@ func (e *Engine) HandleSensorEvent(sensorID int, sensorType string, inAlarm bool
 		return // the keypad commands the alarm, it never sets it off
 	}
 	e.lastAlarm[sensorID] = inAlarm
-	if !inAlarm || !e.watchedLocked(sensorID) {
+	if !inAlarm {
+		delete(e.ignored, sensorID) // at rest: watched again
+		return
+	}
+	if e.ignored[sensorID] || !e.watchedLocked(sensorID) {
 		return
 	}
 	switch e.state {
@@ -330,7 +429,13 @@ func (e *Engine) HandleSensorEvent(sensorID int, sensorType string, inAlarm bool
 
 // watchedLocked tells whether a sensor sets the alarm off in its mode.
 func (e *Engine) watchedLocked(sensorID int) bool {
-	return e.mode != StateArmedNight || !e.configFor(sensorID).NightAllowed
+	return e.watchedInLocked(sensorID, e.mode == StateArmedNight)
+}
+
+// watchedInLocked tells whether a sensor sets the alarm off in the given
+// mode (night or away).
+func (e *Engine) watchedInLocked(sensorID int, night bool) bool {
+	return !night || !e.configFor(sensorID).NightAllowed
 }
 
 // sensorAlarmLocked moves the alarm on for a sensor in alarm: the entry
@@ -339,7 +444,7 @@ func (e *Engine) watchedLocked(sensorID int) bool {
 // excepted. The siren is told the same, as fbxhome told it.
 func (e *Engine) sensorAlarmLocked(sensorID int) {
 	e.logger.Info("alarm: sensor in alarm", "sensor_id", sensorID, "state", e.state)
-	instant := e.configFor(sensorID).Instant
+	instant := e.configFor(sensorID).Instant || e.postSilence
 	switch e.state {
 	case StateArmedAway, StateArmedNight:
 		e.trigBy = sensorID
@@ -356,6 +461,9 @@ func (e *Engine) sensorAlarmLocked(sensorID int) {
 		}
 	case StateTriggered:
 		e.siren.Alert() // again, after an alert that ended
+		if e.alertHook != nil {
+			e.alertHook(Alert{SensorID: sensorID, Again: true})
+		}
 	}
 }
 
@@ -381,6 +489,16 @@ func (e *Engine) triggerLocked(reason string) {
 func (e *Engine) HandleSirenState(s SirenState) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if e.awaitSirenReset {
+		switch s {
+		case SirenAlert, SirenAlertOver:
+			// Sent before the silence, received after: not a new alert.
+			e.logger.Info("alarm: siren alert ignored, awaiting its re-arming", "siren", s)
+			return
+		case SirenOff, SirenArmed, SirenExitDelay:
+			e.awaitSirenReset = false
+		}
+	}
 	switch {
 	case s == SirenArmed && e.state == StateArming:
 		e.armedLocked("exit delay over")
@@ -390,6 +508,31 @@ func (e *Engine) HandleSirenState(s SirenState) {
 	case (s == SirenAlert || s == SirenAlertOver) && e.state != StateDisarmed && e.state != StateTriggered:
 		e.transitionLocked(StateTriggered, "siren "+string(s))
 	}
+}
+
+// Silence stops the siren and keeps the alarm armed, for a remote button.
+// It returns false, with no effect, unless the alarm is set off. The siren
+// is disarmed then armed again, which stops the wail, and the sensors in
+// alarm are ignored until they rest. From then on any sensor sets the alarm
+// off with no entry delay. It does not call inAlarmLocked: the sensors in
+// alarm are the ones to ignore.
+func (e *Engine) Silence() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.state != StateTriggered {
+		return false
+	}
+	e.siren.Disarm()
+	e.siren.Arm(e.mode == StateArmedNight, false)
+	for id, inAlarm := range e.lastAlarm {
+		if inAlarm {
+			e.ignored[id] = true
+		}
+	}
+	e.postSilence, e.awaitSirenReset = true, true
+	e.trigBy = 0 // armed again: no sensor holds the alarm
+	e.transitionLocked(e.mode, "silenced remotely")
+	return true
 }
 
 // margin is how much longer than the siren the engine counts a delay: 0
@@ -433,6 +576,8 @@ func (e *Engine) transitionLocked(newState State, reason string) {
 	case StateDisarmed:
 		e.armedAt, e.trigBy, e.mode = 0, 0, ""
 		e.lastAlarm = make(map[int]bool)
+		e.ignored = make(map[int]bool)
+		e.postSilence, e.awaitSirenReset = false, false
 	case StateArming:
 		e.deadline = time.Now().Add(e.armingDelay)
 	case StatePending:
@@ -443,6 +588,9 @@ func (e *Engine) transitionLocked(newState State, reason string) {
 		e.onChange(e.snapshotLocked())
 	}
 	e.saveLocked()
+	if newState == StateTriggered && old != StateTriggered && e.alertHook != nil {
+		e.alertHook(Alert{SensorID: e.trigBy})
+	}
 }
 
 func (e *Engine) snapshotLocked() Snapshot {
@@ -457,7 +605,7 @@ func (e *Engine) saveLocked() {
 	if e.closed {
 		return
 	}
-	p := persistedState{State: e.state, Mode: e.mode, ArmedAt: e.armedAt, TriggeredBy: e.trigBy}
+	p := persistedState{State: e.state, Mode: e.mode, ArmedAt: e.armedAt, TriggeredBy: e.trigBy, PostSilence: e.postSilence}
 	data, err := json.MarshalIndent(p, "", "  ")
 	if err != nil {
 		e.logger.Error("alarm: marshal state", "error", err)
