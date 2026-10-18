@@ -13,6 +13,7 @@ require (
 	github.com/pion/rtp v1.10.2
 	github.com/pion/srtp/v3 v3.0.12
 	golang.org/x/crypto v0.53.0
+	golang.org/x/crypto/x509roots/fallback v0.0.0-20261016151342-0ae6809b7559
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 )
 

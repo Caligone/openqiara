@@ -531,6 +531,7 @@ func main() {
 	} else {
 		logger.Info("alarm engine skipped (alarmo mode — HA Alarmo is the source of truth)")
 	}
+	startTelegram(ctx, alarmEngine, cam, store, logger)
 
 	// dispatchAlarmCommand routes a user alarm command (from web, HomeKit, MQTT or KPD)
 	// according to the current config:
