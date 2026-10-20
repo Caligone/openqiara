@@ -177,6 +177,9 @@ func main() {
 		// restart without a daemon reboot.
 		mqttPub.HAPublisher().SetOnConnect(func() {
 			republishSensorStates(ctx, cam.CachedSensors(), mqttPub.PublishSensorState, logger)
+			if err := mqttPub.HAPublisher().PublishShutterState(ctx, !store.Get().ShutterClosed); err != nil {
+				logger.Warn("republish shutter state on connect failed", "error", err)
+			}
 			// Republish the current alarm state too, so HA recovers the real
 			// state after a broker/HA restart that dropped the retained value.
 			// Standalone only — in alarmo mode HA Alarmo owns the panel and we
@@ -202,10 +205,6 @@ func main() {
 			mqttPub.HAPublisher().SetupShutterCommandHandler(func(open bool) {
 				if err := cam.SetShutter(ctx, open); err != nil {
 					logger.Warn("shutter command failed", "error", err)
-				} else {
-					if err := mqttPub.HAPublisher().PublishShutterState(ctx, open); err != nil {
-						logger.Warn("publish shutter state failed", "error", err)
-					}
 				}
 			}, logger)
 		}
@@ -223,17 +222,6 @@ func main() {
 	mediaHub = mediahub.New("multicast 1080p + audio", mediahub.Multicast(camera.MulticastVideoMain, camera.MulticastAudio, logger), hlcamdResumer, logger)
 	hlsSrv := hlsserver.New(mediaHub, true, logger)
 
-	// The video pipeline follows the privacy shutter (#50): paused while
-	// closed, at start too. hlcamd starts paused; this replaces the
-	// resume_streams boot.sh sent.
-	if rc, ok := cam.(*camera.RadioClient); ok {
-		rc.OnShutter = func(ctx context.Context, open bool) {
-			if err := store.Update(func(c *config.Config) { c.ShutterClosed = !open }); err != nil {
-				logger.Warn("shutter state not saved", "error", err)
-			}
-			hlcamdResumer.Shutter(ctx, open)
-		}
-	}
 	go func() {
 		select {
 		case <-time.After(10 * time.Second): // hlcamd registers on fbxbus
@@ -256,11 +244,33 @@ func main() {
 				Name:    cfg.HomeKit.Camera.Name,
 			},
 		}, logger)
+		hkPub.PublishShutterState(!store.Get().ShutterClosed)
 		if err := hkPub.Start(ctx, sensors, cmds); err != nil {
 			logger.Error("failed to start HomeKit publisher", "error", err)
 		} else {
 			pubs = append(pubs, hkPub)
 			logger.Info("HomeKit publisher started")
+		}
+	}
+
+	// The video pipeline follows the privacy shutter (#50): paused while
+	// closed, at start too. hlcamd starts paused; this replaces the
+	// resume_streams boot.sh sent. HA and HomeKit follow it too, whoever
+	// moved it.
+	if rc, ok := cam.(*camera.RadioClient); ok {
+		rc.OnShutter = func(ctx context.Context, open bool) {
+			if err := store.Update(func(c *config.Config) { c.ShutterClosed = !open }); err != nil {
+				logger.Warn("shutter state not saved", "error", err)
+			}
+			hlcamdResumer.Shutter(ctx, open)
+			if mqttPub != nil {
+				if err := mqttPub.HAPublisher().PublishShutterState(ctx, open); err != nil {
+					logger.Warn("publish shutter state failed", "error", err)
+				}
+			}
+			if hkPub != nil {
+				hkPub.PublishShutterState(open)
+			}
 		}
 	}
 
