@@ -85,7 +85,10 @@ type HomeKitPublisher struct {
 	motions  map[int]*accessory.MotionSensor
 	switches map[int]*accessory.Switch // sirens
 	alarm    *accessory.SecuritySystem
+	shutter  *accessory.Switch
 	camera   *HomeKitCamera // optional, nil unless cfg.Camera.Enabled
+
+	shutterOpen bool // applied to the switch on every rebuild
 }
 
 // Camera returns the HomeKitCamera handle, or nil if the camera wasn't
@@ -171,6 +174,17 @@ func (p *HomeKitPublisher) PublishSensorState(ctx context.Context, sensor camera
 	return nil
 }
 
+// PublishShutterState reflects the shutter's actual state on the switch,
+// whoever moved it (HA, the web UI or HomeKit itself).
+func (p *HomeKitPublisher) PublishShutterState(open bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.shutterOpen = open
+	if p.shutter != nil {
+		p.shutter.Switch.On.SetValue(open)
+	}
+}
+
 func (p *HomeKitPublisher) PublishAlarmState(ctx context.Context, state string) error {
 	if p.alarm == nil {
 		return nil
@@ -227,6 +241,7 @@ func (p *HomeKitPublisher) buildAndServe(sensors []camera.Sensor) error {
 	p.motions = make(map[int]*accessory.MotionSensor)
 	p.switches = make(map[int]*accessory.Switch)
 	p.alarm = nil
+	p.shutter = nil
 
 	bridge := accessory.NewBridge(accessory.Info{
 		Name:         p.cfg.Name,
@@ -332,9 +347,11 @@ func (p *HomeKitPublisher) buildAndServe(sensors []camera.Sensor) error {
 			Manufacturer: "OpenQiara",
 		})
 		shutter.Id = aidShutter
+		shutter.Switch.On.SetValue(p.shutterOpen)
 		shutter.Switch.On.OnValueRemoteUpdate(func(on bool) {
 			p.cmds.OnShutterCommand(on)
 		})
+		p.shutter = shutter
 		accs = append(accs, shutter.A)
 		p.log.Info("homekit: shutter switch added")
 	}
