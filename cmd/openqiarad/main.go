@@ -614,7 +614,6 @@ func main() {
 			sirenCtrl.Handle(state)
 			setAlarmState(state)
 		})
-		logger.Info("subscribed to alarmo state", "topic", alarmoStateTopic)
 	}
 
 	// Ensure publishers are closed on exit
