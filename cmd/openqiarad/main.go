@@ -120,7 +120,9 @@ func main() {
 		}
 		return ""
 	}
-	setAlarmState("disarmed")
+	// Empty until the alarm engine (standalone) or Alarmo sets it: a
+	// "disarmed" default here was republished by OnConnect before the real
+	// state loaded, a phantom disarm in HA at every boot (#58).
 
 	// Command handler shared by all publishers
 	cmds := &publisher.CommandHandler{

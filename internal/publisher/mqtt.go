@@ -58,12 +58,11 @@ func (m *MQTTPublisher) Start(ctx context.Context, sensors []camera.Sensor, cmds
 			// Publish alarm discovery only in standalone mode. In alarmo mode
 			// we don't want a duplicate alarm_control_panel entity in HA.
 			if m.PublishAlarmEntity {
+				// No initial state here: a hardcoded "disarmed" made HA see a
+				// phantom disarm at every boot (#58). main publishes the real
+				// state after the alarm engine starts, and on every connect.
 				if err := m.pub.PublishAlarmDiscovery(ctx, s); err != nil {
 					m.log.Warn("alarm discovery failed", "error", err)
-				} else {
-					if err := m.pub.PublishAlarmState(ctx, s.ID, "disarmed"); err != nil {
-						m.log.Warn("publish initial alarm state failed", "error", err)
-					}
 				}
 			} else {
 				// Remove any stale discovery from a previous standalone run.
