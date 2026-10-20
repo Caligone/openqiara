@@ -11,9 +11,12 @@ import (
 )
 
 // recordingClient is a mqtt.Client that records what would go on the wire.
-// Only Publish needs real behaviour; the rest satisfies the interface.
+// Only Publish and Subscribe need real behaviour; the rest satisfies the
+// interface.
 type recordingClient struct {
-	published []recordedPublish
+	published  []recordedPublish
+	subscribed []string
+	closed     bool // connection not open
 }
 
 type recordedPublish struct {
@@ -29,10 +32,11 @@ func (c *recordingClient) Publish(topic string, _ byte, retain bool, payload any
 }
 
 func (c *recordingClient) IsConnected() bool      { return true }
-func (c *recordingClient) IsConnectionOpen() bool { return true }
+func (c *recordingClient) IsConnectionOpen() bool { return !c.closed }
 func (c *recordingClient) Connect() mqtt.Token    { return doneToken{} }
 func (c *recordingClient) Disconnect(uint)        {}
-func (c *recordingClient) Subscribe(string, byte, mqtt.MessageHandler) mqtt.Token {
+func (c *recordingClient) Subscribe(topic string, _ byte, _ mqtt.MessageHandler) mqtt.Token {
+	c.subscribed = append(c.subscribed, topic)
 	return doneToken{}
 }
 func (c *recordingClient) SubscribeMultiple(map[string]byte, mqtt.MessageHandler) mqtt.Token {

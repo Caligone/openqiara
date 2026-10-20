@@ -47,6 +47,16 @@ type HAPublisher struct {
 
 	watchdogOnce sync.Once
 	disconnected time.Time // zero when connected; set on first observed disconnect
+
+	// subs are re-sent on every connection. Own lock: OnConnectHandler reads
+	// them while Connect may still hold mu.
+	subsMu sync.Mutex
+	subs   map[string]subscription
+}
+
+type subscription struct {
+	qos     byte
+	handler mqtt.MessageHandler
 }
 
 // SetOnConnect registers a callback invoked after discovery is (re)published on
@@ -107,6 +117,7 @@ func (p *HAPublisher) Connect(ctx context.Context, cfg Config, sensors []camera.
 		SetOnConnectHandler(func(_ mqtt.Client) {
 			p.log.Info("mqtt connected", "broker", cfg.Broker)
 			p.republishDiscovery(ctx)
+			p.resubscribe()
 			p.mu.Lock()
 			fn := p.onConnect
 			p.mu.Unlock()
@@ -258,16 +269,67 @@ func (p *HAPublisher) PublishIVDetection(ctx context.Context, kind string, detec
 // Subscribe subscribes to a raw MQTT topic with the given handler.
 // Used for custom integrations like listening to alarmo/state.
 func (p *HAPublisher) Subscribe(topic string, handler func(topic string, payload []byte)) {
-	if p.client == nil || !p.client.IsConnected() {
-		return
-	}
-	p.client.Subscribe(topic, 0, func(_ mqtt.Client, msg mqtt.Message) {
+	p.subscribe(topic, 0, func(_ mqtt.Client, msg mqtt.Message) {
 		handler(msg.Topic(), msg.Payload())
 	})
 }
 
+// subscribe registers a subscription, re-sent on every (re)connection, and
+// sends it right away if the connection is open. paho never re-sends a
+// SUBSCRIBE by itself: CleanSession=false counts on the broker keeping the
+// session, which a broker restarted without persistence doesn't (#59).
+func (p *HAPublisher) subscribe(topic string, qos byte, handler mqtt.MessageHandler) {
+	if p.client == nil {
+		p.log.Warn("MQTT client nil, cannot subscribe", "topic", topic)
+		return
+	}
+	p.subsMu.Lock()
+	if p.subs == nil {
+		p.subs = map[string]subscription{}
+	}
+	p.subs[topic] = subscription{qos: qos, handler: handler}
+	p.subsMu.Unlock()
+
+	if p.client.IsConnectionOpen() {
+		p.sendSubscribe(topic, qos, handler)
+	}
+}
+
+// resubscribe re-sends every registered subscription. Called from
+// OnConnectHandler.
+func (p *HAPublisher) resubscribe() {
+	p.subsMu.Lock()
+	subs := make(map[string]subscription, len(p.subs))
+	for topic, s := range p.subs {
+		subs[topic] = s
+	}
+	p.subsMu.Unlock()
+
+	for topic, s := range subs {
+		p.sendSubscribe(topic, s.qos, s.handler)
+	}
+}
+
+func (p *HAPublisher) sendSubscribe(topic string, qos byte, handler mqtt.MessageHandler) {
+	token := p.client.Subscribe(topic, qos, handler)
+	go func() {
+		if !token.WaitTimeout(publishTimeout) {
+			p.log.Warn("mqtt subscribe timeout", "topic", topic)
+			return
+		}
+		if err := token.Error(); err != nil {
+			p.log.Warn("mqtt subscribe failed", "topic", topic, "error", err)
+			return
+		}
+		p.log.Info("mqtt subscribed", "topic", topic)
+	}()
+}
+
 // Unsubscribe removes a previous subscription.
 func (p *HAPublisher) Unsubscribe(topic string) {
+	p.subsMu.Lock()
+	delete(p.subs, topic)
+	p.subsMu.Unlock()
 	if p.client == nil || !p.client.IsConnected() {
 		return
 	}
@@ -277,7 +339,7 @@ func (p *HAPublisher) Unsubscribe(topic string) {
 // SetupShutterCommandHandler subscribes to shutter commands from HA.
 func (p *HAPublisher) SetupShutterCommandHandler(callback func(open bool), logger *slog.Logger) {
 	topic := p.prefix + "/shutter/set"
-	p.client.Subscribe(topic, 1, func(_ mqtt.Client, msg mqtt.Message) {
+	p.subscribe(topic, 1, func(_ mqtt.Client, msg mqtt.Message) {
 		cmd := string(msg.Payload())
 		logger.Info("shutter command received", "command", cmd)
 		switch cmd {
@@ -353,14 +415,13 @@ func (p *HAPublisher) SetupSirenCommandHandler(sensors []camera.Sensor, callback
 		}
 		topic := fmt.Sprintf("%s/siren/%d/set", p.prefix, s.ID)
 		sensorID := s.ID
-		p.client.Subscribe(topic, qos, func(_ mqtt.Client, msg mqtt.Message) {
+		p.subscribe(topic, qos, func(_ mqtt.Client, msg mqtt.Message) {
 			cmd := string(msg.Payload())
 			logger.Info("siren command from HA", "command", cmd, "sensor_id", sensorID)
 			if callback != nil {
 				callback(sensorID, cmd)
 			}
 		})
-		logger.Info("subscribed to siren commands", "topic", topic, "sensor_id", s.ID)
 	}
 }
 
