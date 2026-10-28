@@ -57,7 +57,7 @@ jobs:
           file openqiarad-linux-arm7
 
       - name: SHA256 checksums
-        run: sha256sum openqiarad-linux-arm7 scripts/sd_setup.sh scripts/sd_setup_ubuntu.sh scripts/fix_journal.sh scripts/camera_boot.sh > SHA256SUMS
+        run: sha256sum openqiarad-linux-arm7 scripts/sd_setup.sh scripts/sd_setup_ubuntu.sh scripts/sd_setup_wsl.sh scripts/fix_journal.sh scripts/camera_boot.sh > SHA256SUMS
 
       - name: Generate release notes
         run: |
@@ -93,6 +93,7 @@ jobs:
             openqiarad-linux-arm7
             scripts/sd_setup.sh
             scripts/sd_setup_ubuntu.sh
+            scripts/sd_setup_wsl.sh
             scripts/fix_journal.sh
             scripts/camera_boot.sh
             SHA256SUMS
