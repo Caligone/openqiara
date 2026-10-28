@@ -23,7 +23,7 @@ en reverse engineering.
   si tu as besoin de récupération offline — pas requis pour le happy path)
 
 **Sur ton ordinateur :**
-- Linux ou macOS avec Go 1.26+ installé
+- Linux, macOS ou Windows avec WSL2, avec Go 1.26+ installé
 - Une paire de clés SSH (`~/.ssh/id_ed25519` fait l'affaire)
 
 **Sur ton réseau :**
@@ -66,7 +66,8 @@ de passe.** Et la seule clé autorisée est celle que tu as écrite dans
 
 Sur une caméra stock, ce fichier ne contient pas ta clé → tu obtiendras
 `Permission denied (publickey)`. C'est attendu : il faut d'abord **retirer la
-microSD et la préparer offline** avec `sd_setup.sh --ssh-pubkey`, voir
+microSD et la préparer offline** avec `sd_setup.sh --ssh-pubkey`
+(`sd_setup_wsl.sh` sous Windows), voir
 [`install.md`](install.md). Reviens ici une fois que tu as l'accès SSH.
 
 ---
