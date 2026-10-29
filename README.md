@@ -102,9 +102,11 @@ mort — pas des bugs à corriger en bidouillant `openqiarad`.
 
 ## Démarrage rapide
 
-**Prérequis :** macOS avec [Homebrew](https://brew.sh) **ou** Linux (Ubuntu/Debian),
-et un réseau WiFi 2.4 GHz. Deux scripts d'install équivalents sont fournis :
-`sd_setup.sh` (macOS) et `sd_setup_ubuntu.sh` (Linux).
+**Prérequis :** macOS avec [Homebrew](https://brew.sh), Linux (Ubuntu/Debian)
+**ou** Windows avec WSL2 et [usbipd-win](https://github.com/dorssel/usbipd-win),
+et un réseau WiFi 2.4 GHz. Trois scripts d'install équivalents sont fournis :
+`sd_setup.sh` (macOS), `sd_setup_ubuntu.sh` (Linux) et `sd_setup_wsl.sh`
+(Windows via WSL2).
 
 ### 1. Sauvegarde de la carte SD
 
@@ -134,6 +136,56 @@ sudo dd if=/dev/${DISK}2 bs=1M of=backup_data.img
 sudo dd if=/dev/${DISK}3 bs=1M of=backup_media.img
 ```
 
+Sur **Windows**, passe par WSL2. Son noyau lit et écrit l'ext4, mais il ne
+voit pas les lecteurs de Windows : il faut lui confier le lecteur de carte
+avec usbipd. Dans un PowerShell **administrateur** :
+
+```powershell
+winget install usbipd
+usbipd list
+```
+
+Repère ton lecteur de carte dans la liste, souvent affiché comme
+« Dispositif de stockage de masse USB » (« USB Mass Storage Device » sur un
+Windows en anglais). En cas de doute, compare la liste lecteur débranché puis
+branché. Note son `BUSID` (ex : `4-8`) et attache-le à WSL :
+
+```powershell
+usbipd bind --busid 4-8           # une seule fois, en administrateur
+usbipd attach --wsl --busid 4-8   # après chaque redémarrage de WSL ou du lecteur
+usbipd list                       # la colonne STATE doit afficher "Attached"
+```
+
+> usbipd ne partage que des périphériques USB. Un lecteur SD intégré au
+> portable et branché en PCIe n'apparaît pas dans `usbipd list` : utilise
+> alors un lecteur USB. Tant qu'il est attaché à WSL, le lecteur disparaît
+> de Windows.
+
+Dans WSL, installe les outils (une seule fois) puis repère la carte. Le
+client `usbip` (`linux-tools-generic`) que citent d'anciens guides est
+inutile : usbipd-win 4+ embarque le sien.
+
+```bash
+sudo apt-get update && sudo apt-get install -y e2fsprogs file
+sudo modprobe usb_storage   # WSL ne le charge pas toujours à l'attach
+lsblk -o NAME,SIZE,TYPE,MODEL
+```
+
+Les premiers disques (`sda` à `sdd`, modèle `Virtual Disk`) appartiennent à
+WSL et n'ont pas de partitions. La carte est le disque suivant, avec trois
+partitions (ex : `sde` avec `sde1`/`sde2`/`sde3`). Dumpe-les depuis ton home
+WSL, bien plus rapide que `/mnt/c` :
+
+```bash
+cd ~
+DISK=sde   # ajuster (lsblk)
+sudo dd if=/dev/${DISK}1 bs=1M of=backup_rootfs.img
+sudo dd if=/dev/${DISK}2 bs=1M of=backup_data.img
+sudo dd if=/dev/${DISK}3 bs=1M of=backup_media.img
+```
+
+Laisse le lecteur attaché : l'étape 3 en a besoin.
+
 Garde ces fichiers en lieu sûr — c'est ton billet retour si quelque chose tourne mal.
 
 ### 2. Télécharger les artefacts
@@ -150,18 +202,19 @@ VERSION=v0.1.0-alpha.3   # ajuster selon la dernière release publiée
 # Binaire daemon (ARMv7) + scripts d'install
 BASE=https://github.com/Caligone/openqiara/releases/download/$VERSION
 curl -LO $BASE/openqiarad-linux-arm7
-curl -LO $BASE/sd_setup.sh          # macOS ; sur Linux : curl -LO $BASE/sd_setup_ubuntu.sh
+curl -LO $BASE/sd_setup.sh          # macOS ; Linux : sd_setup_ubuntu.sh ; Windows (WSL2) : sd_setup_wsl.sh
 curl -LO $BASE/camera_boot.sh   # requis : sd_setup.sh le copie dans /data/boot.sh
 curl -LO $BASE/SHA256SUMS
 
 # Vérification d'intégrité
 shasum -a 256 -c SHA256SUMS
 
-chmod +x sd_setup.sh
+chmod +x sd_setup.sh                # ou sd_setup_ubuntu.sh / sd_setup_wsl.sh
 ```
 
-> `sd_setup.sh` cherche `camera_boot.sh` à côté de lui (install release-only)
-> ou dans `scripts/` (checkout du repo). Garde-les dans le même dossier.
+> Les scripts `sd_setup*.sh` cherchent `camera_boot.sh` à côté d'eux (install
+> release-only) ou dans `scripts/` (checkout du repo). Garde-les dans le même
+> dossier. Sous WSL, travaille dans ton home WSL plutôt que sous `/mnt/c`.
 
 Si tu préfères compiler toi-même, voir la section [Compilation](#compilation) plus bas.
 
@@ -195,6 +248,27 @@ sudo ./sd_setup_ubuntu.sh \
     --ssh-pubkey ~/.ssh/id_ed25519.pub
 ```
 
+**Windows (WSL2) :**
+
+Le lecteur doit être attaché à WSL (voir l'étape 1). Le script appelle
+`sudo` lui-même : lance-le sans `sudo`.
+
+```bash
+# --disk = le disque repéré à l'étape 1 avec lsblk (ex : sde)
+./sd_setup_wsl.sh \
+    --disk sde \
+    --wifi-ssid "MonReseau" \
+    --wifi-pass "MonMotDePasse" \
+    --daemon openqiarad-linux-arm7 \
+    --ssh-pubkey ~/.ssh/id_ed25519.pub
+```
+
+Rends ensuite le lecteur à Windows avant de retirer la carte (PowerShell) :
+
+```powershell
+usbipd detach --busid 4-8
+```
+
 > **`--ssh-pubkey` n'est pas optionnel en pratique.** La caméra n'autorise
 > aucun mot de passe et n'embarque aucune clé : l'accès SSH vient uniquement
 > de `/data/ssh_authorized_keys`, écrit par cette commande. Sans clé, la
@@ -211,10 +285,17 @@ Trouve la caméra sur le réseau :
 arp -a | grep lwip
 ```
 
+Sous Windows, `arp -a` n'affiche pas les noms d'hôte, et depuis WSL il ne
+voit pas ton réseau local. Ouvre `http://openqiara.local` dans un navigateur
+Windows, ou cherche la caméra dans la liste des appareils de ta box.
+
 > **Caméra introuvable sur le réseau ?** Le boot écrit un diagnostic wifi
 > dans `/data/boot_wifi.log` (écrasé à chaque démarrage). Tu peux le lire
 > en remettant la SD dans le Mac et en ouvrant la partition `data` avec
-> `debugfs -R "cat boot_wifi.log" /dev/diskNs2`. Tu y verras le SSID
+> `debugfs -R "cat boot_wifi.log" /dev/diskNs2`. Sous WSL, rattache le
+> lecteur et monte la partition en lecture seule :
+> `sudo mount -o ro /dev/sdX2 /mnt && cat /mnt/boot_wifi.log; sudo umount /mnt`.
+> Tu y verras le SSID
 > configuré, l'état de l'interface `ssv0` et les messages `dmesg` du
 > driver wifi. Rappels : la puce est **2.4 GHz uniquement** et ne gère
 > que WPA2-PSK (pas WPA3-only ni WPA-Enterprise).
@@ -223,12 +304,15 @@ arp -a | grep lwip
 >
 > 1. **Aucune clé n'a été installée.** Vérifie depuis la SD :
 >    `debugfs -R "cat ssh_authorized_keys" /dev/diskNs2` (macOS) ou
->    `sudo debugfs -R "cat ssh_authorized_keys" /dev/sdX2` (Linux). Si le
+>    `sudo debugfs -R "cat ssh_authorized_keys" /dev/sdX2` (Linux, WSL). Si le
 >    fichier est vide ou absent, relance `sd_setup.sh` avec `--ssh-pubkey`.
 >    Attention : le script **reformate `/data`**, donc tu repars d'une config
 >    vierge et les capteurs sont à ré-appairer. Sur une caméra déjà en
 >    service, préfère écrire la clé directement dans la partition :
 >    `debugfs -w -R "write ~/.ssh/id_ed25519.pub ssh_authorized_keys" /dev/diskNs2`.
+>    Sous WSL, le noyau monte l'ext4 : copie simplement la clé dans la
+>    partition, comme le fait `sd_setup_wsl.sh` :
+>    `sudo mount /dev/sdX2 /mnt && sudo cp ~/.ssh/id_ed25519.pub /mnt/ssh_authorized_keys && sudo umount /mnt`.
 > 2. **Ta clé est au format RSA.** Le dropbear de la caméra ne signe qu'en
 >    `ssh-rsa` (SHA-1), qu'OpenSSH 8.7+ refuse par défaut. Ajoute
 >    `-o PubkeyAcceptedAlgorithms=+ssh-rsa`, ou utilise une clé ed25519 qui

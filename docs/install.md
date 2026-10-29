@@ -164,5 +164,5 @@ reboot
 ## En cas de perte d'accès
 
 1. Créer un hotspot WiFi avec les credentials connus
-2. Si rootfs corrompu : restaurer le backup via `dd` sur la SD depuis le Mac, ou repartir de zéro avec [`scripts/sd_setup.sh`](../scripts/sd_setup.sh) (installation hors-ligne via debugfs)
+2. Si rootfs corrompu : restaurer le backup via `dd` sur la SD depuis le Mac, Linux ou WSL (lecteur attaché avec usbipd, voir le [README](../README.md#1-sauvegarde-de-la-carte-sd)), ou repartir de zéro avec [`scripts/sd_setup.sh`](../scripts/sd_setup.sh) (installation hors-ligne via debugfs)
 3. Si MCU corrompu : accès UART nécessaire (ESP32 bridge ou dongle CH340 3.3V)
