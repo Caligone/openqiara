@@ -5,11 +5,9 @@
 # unlike sd_setup.sh/sd_setup_ubuntu.sh (which patch the filesystem offline
 # via debugfs, since macOS/some minimal Linux hosts can't mount ext4 at
 # all), this variant mounts the partitions directly and edits files with
-# plain cp/sed. debugfs is not needed here, and the first version of this
-# script (#32) reported that e2fsprogs <1.46 (Ubuntu 20.04's default)
-# corrupts directory entries when rm+write-ing a file on a filesystem with
-# metadata_csum enabled, destroying /etc/init.d/rcS.real. Not reproduced:
-# unverified. It expects the SD card to be attached to the WSL2 VM as a raw
+# plain cp/sed. debugfs is not needed here (debugfs < 1.46, Ubuntu 20.04's
+# default, used to lose rcS.real on a "write" to a full path, see #65).
+# It expects the SD card to be attached to the WSL2 VM as a raw
 # USB device (not just mounted read-only by Windows).
 #
 # Prerequisites (one-time, on the Windows host, as admin):

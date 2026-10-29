@@ -249,7 +249,10 @@ else
 # === OpenQiara autostart (added by sd_setup) ===
 [ -x /data/boot.sh ] && /data/boot.sh >> /data/boot_debug.log 2>&1 &
 PATCH
-    printf "rm /etc/init.d/rcS.real\nwrite $TMPDIR/rcS.real /etc/init.d/rcS.real\nset_inode_field /etc/init.d/rcS.real mode 0100755\n" | $DEBUGFS -w "$PART_ROOTFS" 2>/dev/null
+    # cd first: debugfs < 1.46 treats write's destination as a bare name, so
+    # "write x /etc/init.d/rcS.real" creates a file literally named that in /
+    # right after rm deleted the real one — the camera then no longer boots (#65).
+    printf "cd /etc/init.d\nrm rcS.real\nwrite $TMPDIR/rcS.real rcS.real\nset_inode_field rcS.real mode 0100755\n" | $DEBUGFS -w "$PART_ROOTFS" 2>/dev/null
     echo "  rcS.real patched ✓"
 fi
 

@@ -236,7 +236,8 @@ PATCH
 fi
 
 if [ "$rcS_changed" = true ]; then
-    printf "rm /etc/init.d/rcS.real\nwrite $TMPDIR/rcS.real /etc/init.d/rcS.real\nset_inode_field /etc/init.d/rcS.real mode 0100755\n" | $DEBUGFS -w "$PART_ROOTFS" 2>/dev/null
+    # cd first: debugfs < 1.46 treats write's destination as a bare name (#65).
+    printf "cd /etc/init.d\nrm rcS.real\nwrite $TMPDIR/rcS.real rcS.real\nset_inode_field rcS.real mode 0100755\n" | $DEBUGFS -w "$PART_ROOTFS" 2>/dev/null
     echo "  rcS.real written ✓"
 fi
 
