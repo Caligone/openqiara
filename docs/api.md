@@ -76,7 +76,7 @@ acceptée. Trois cas où l'écart est visible :
   vérité arrive quelques centaines de ms plus tard via MQTT et peut
   contredire la réponse. Pour l'état réel, lire `GET /api/v1/alarm` ou
   s'abonner au flux SSE.
-- `PUT /kpd/code` persiste le code ; il part au prochain réveil du
+- `PUT /kpd/codes` persiste les codes ; ils partent au prochain réveil du
   clavier. Le `200` ne dit rien du clavier, seulement de la config.
 
 Ne « corrigez » pas les commandes en ressources REST : elles ne modélisent
@@ -131,16 +131,33 @@ qu'il se taise.
 Boucler sur `GET` jusqu'à `done:true`, puis `DELETE` pour libérer la session
 si l'utilisateur abandonne.
 
-### Code clavier (KPD)
+### Codes clavier (KPD)
+
+| Méthode | Chemin | Corps | Réponse |
+|---|---|---|---|
+| `GET` | `/api/v1/kpd/codes` | — | `{sensor_id, codes: [{password, label?}]}` |
+| `PUT` | `/api/v1/kpd/codes` | `{codes: [{password, label?}]}` | `{ok:true}` |
+
+`PUT` remplace la liste entière : relire, modifier, renvoyer. Le clavier
+reçoit la liste à chaque réveil et vérifie lui-même le code tapé.
+
+- `password` = exactement 4 chiffres, sans doublon dans la liste.
+- Au plus 10 codes. Ce n'est pas une limite connue du clavier (deux codes
+  vérifiés sur le matériel), mais une marge prudente.
+- Une liste vide est acceptée : le clavier n'est alors plus servi, il ne
+  peut plus ni armer ni désarmer (sans code, sa touche OFF suffirait à
+  désarmer).
+- Une liste refusée (`400`) n'est pas enregistrée, même en partie.
+
+L'ancienne API à un seul code reste servie pour les clients existants.
+Elle agit sur le **premier** code de la liste et laisse les autres
+intacts :
 
 | Méthode | Chemin | Corps | Réponse |
 |---|---|---|---|
 | `GET` | `/api/v1/kpd/code` | — | `{sensor_id, code: {password, label} \| null}` |
 | `PUT` | `/api/v1/kpd/code` | `{password, label?}` | `{ok:true}` |
 | `DELETE` | `/api/v1/kpd/code` | — | `{ok:true}` |
-
-`password` = exactement 4 chiffres. Un seul code par installation : c'est
-une contrainte du firmware, pas un choix d'API.
 
 Le modèle assume **un seul clavier** :
 
@@ -178,10 +195,10 @@ Notes :
   setup code HomeKit. Renvoyer cette valeur telle quelle en écriture laisse
   le secret stocké intact, ce qui permet à un client de relire la config et
   de la réécrire sans effacer ce qu'il n'a pas vu.
-- **Le code PIN du clavier fait exception** : `GET /api/v1/kpd/code` le
-  renvoie en clair, parce que l'UI l'affiche pour que l'utilisateur le
-  retrouve. C'est le code qui désarme l'alarme — ne pas exposer cette API
-  hors du réseau local, et configurer un mot de passe admin.
+- **Les codes du clavier font exception** : `GET /api/v1/kpd/codes` les
+  renvoie en clair, parce que l'UI les affiche pour que l'utilisateur les
+  retrouve. Ce sont les codes qui désarment l'alarme — ne pas exposer cette
+  API hors du réseau local, et configurer un mot de passe admin.
 - `PUT /config/mqtt` répond `{"reboot_required":true}` : le broker n'est lu
   qu'au boot. `PUT /config/web` répond `{"restart_required":true}`.
 

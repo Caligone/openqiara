@@ -269,10 +269,18 @@ type SensorEntry struct {
 	Type         string `json:"type"`
 	Model        string `json:"model"`
 	Label        string `json:"label,omitempty"`
-	KPDCode      string `json:"kpd_code,omitempty"`
-	KPDCodeLabel string `json:"kpd_code_label,omitempty"`
 	NightAllowed bool   `json:"night_allowed,omitempty"` // ignored by the alarm when armed for the night
 	Instant      bool   `json:"instant,omitempty"`       // fires the siren with no entry delay
+
+	// KPDCodes are the codes a keypad accepts: it gets the list each time
+	// it wakes up and checks a typed code against it itself.
+	KPDCodes []KPDCode `json:"kpd_codes,omitempty"`
+	// KPDCode and KPDCodeLabel are the first of KPDCodes, in the file
+	// only: an openqiarad from before kpd_codes reads them alone, and
+	// once downgraded still serves the keypad a code (with none, its off
+	// button alone would disarm). Read only to migrate such a file.
+	KPDCode      string `json:"kpd_code,omitempty"`
+	KPDCodeLabel string `json:"kpd_code_label,omitempty"`
 
 	// Radio is where the sensor sits on the radio network: set at
 	// pairing, imported from fbxhome.xml at the first start.
@@ -283,6 +291,12 @@ type SensorEntry struct {
 	// Temperature is the last one the sensor reported, in °C; nil before
 	// the first. Kept across restarts, sensors send it rarely.
 	Temperature *int `json:"temperature,omitempty"`
+}
+
+// KPDCode is a code a keypad accepts.
+type KPDCode struct {
+	Password string `json:"password"` // 4 digits
+	Label    string `json:"label,omitempty"`
 }
 
 // RadioNode is a sensor's place on the radio network. Addr 0 means none.
@@ -327,6 +341,7 @@ func (s *Store) Load() error {
 		return fmt.Errorf("parse config: %w", err)
 	}
 	migrateNightAlarm(&s.cfg, data)
+	migrateKPDCode(&s.cfg)
 
 	// Migration legacy : si on a un password en clair (ancien schéma)
 	// et pas de hash, on hash maintenant. Le Save() est différé jusqu'à
@@ -372,6 +387,20 @@ func migrateNightAlarm(cfg *Config, data []byte) {
 	}
 }
 
+// migrateKPDCode turns kpd_code, a keypad's single code before
+// kpd_codes, into its code list. kpd_codes wins when both are there:
+// kpd_code then only mirrors its first code. In memory, kpd_code stays
+// empty; save writes it back from the list.
+func migrateKPDCode(cfg *Config) {
+	for i := range cfg.Sensors {
+		se := &cfg.Sensors[i]
+		if len(se.KPDCodes) == 0 && se.KPDCode != "" {
+			se.KPDCodes = []KPDCode{{Password: se.KPDCode, Label: se.KPDCodeLabel}}
+		}
+		se.KPDCode, se.KPDCodeLabel = "", ""
+	}
+}
+
 // Save writes the current configuration to disk.
 //
 // Note sécurité : le fichier contient un hash bcrypt + tokens MQTT en
@@ -388,7 +417,7 @@ func (s *Store) Save() error {
 // leaves the previous config, never a truncated one. In charmux mode it
 // is the registry of the paired sensors.
 func (s *Store) save() error {
-	data, err := json.MarshalIndent(s.cfg, "", "  ")
+	data, err := json.MarshalIndent(s.cfg.fileForm(), "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
 	}
@@ -435,6 +464,22 @@ func (s *Store) Update(fn func(*Config)) error {
 
 func (c Config) clone() Config {
 	c.Sensors = slices.Clone(c.Sensors)
+	for i := range c.Sensors {
+		c.Sensors[i].KPDCodes = slices.Clone(c.Sensors[i].KPDCodes)
+	}
 	c.DeletedIDs = slices.Clone(c.DeletedIDs)
+	return c
+}
+
+// fileForm is the config as written to the file: each keypad's first
+// code is also where an openqiarad from before kpd_codes reads it.
+func (c Config) fileForm() Config {
+	c = c.clone()
+	for i := range c.Sensors {
+		se := &c.Sensors[i]
+		if len(se.KPDCodes) > 0 {
+			se.KPDCode, se.KPDCodeLabel = se.KPDCodes[0].Password, se.KPDCodes[0].Label
+		}
+	}
 	return c
 }

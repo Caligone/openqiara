@@ -1,8 +1,10 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -157,15 +159,15 @@ func TestStoreLoadMigratesLegacyPassword(t *testing.T) {
 // the web server edits).
 func TestGetSharesNothing(t *testing.T) {
 	s := NewStore(filepath.Join(t.TempDir(), "config.json"))
-	if err := s.Update(func(c *Config) { c.Sensors = []SensorEntry{{ID: 14, KPDCode: "1234"}} }); err != nil {
+	if err := s.Update(func(c *Config) { c.Sensors = []SensorEntry{{ID: 14, KPDCodes: []KPDCode{{Password: "1234"}}}} }); err != nil {
 		t.Fatal(err)
 	}
 	before := s.Get()
-	if err := s.Update(func(c *Config) { c.Sensors[0].KPDCode = "5678" }); err != nil {
+	if err := s.Update(func(c *Config) { c.Sensors[0].KPDCodes[0].Password = "5678" }); err != nil {
 		t.Fatal(err)
 	}
-	if before.Sensors[0].KPDCode != "1234" {
-		t.Errorf("copy changed to %q", before.Sensors[0].KPDCode)
+	if got := before.Sensors[0].KPDCodes[0].Password; got != "1234" {
+		t.Errorf("copy changed to %q", got)
 	}
 }
 
@@ -223,5 +225,67 @@ func TestMigrateNightAlarm(t *testing.T) {
 	saved, _ := os.ReadFile(path)
 	if strings.Contains(string(saved), "night_alarm") || strings.Contains(string(saved), "day_alarm") {
 		t.Errorf("fbxhome flags still saved:\n%s", saved)
+	}
+}
+
+// TestMigrateKPDCode: a keypad's single kpd_code becomes its code list;
+// a file that has kpd_codes keeps them, kpd_code only mirroring the
+// first.
+func TestMigrateKPDCode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	old := `{"sensors": [
+		{"id": 14, "type": "KPD", "kpd_code": "1234", "kpd_code_label": "Moi"},
+		{"id": 15, "type": "KPD", "kpd_code": "1234", "kpd_codes": [{"password": "1234"}, {"password": "5678"}]},
+		{"id": 23, "type": "DWS"}
+	]}`
+	if err := os.WriteFile(path, []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := NewStore(path)
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	want := map[int][]KPDCode{
+		14: {{Password: "1234", Label: "Moi"}},
+		15: {{Password: "1234"}, {Password: "5678"}},
+		23: nil,
+	}
+	for _, se := range s.Get().Sensors {
+		if !slices.Equal(se.KPDCodes, want[se.ID]) {
+			t.Errorf("sensor %d: codes = %+v, want %+v", se.ID, se.KPDCodes, want[se.ID])
+		}
+		if se.KPDCode != "" || se.KPDCodeLabel != "" {
+			t.Errorf("sensor %d: kpd_code %q %q left in memory", se.ID, se.KPDCode, se.KPDCodeLabel)
+		}
+	}
+}
+
+// TestSaveMirrorsFirstKPDCode: the file keeps the first code where an
+// openqiarad from before kpd_codes reads it, so that a downgrade still
+// serves the keypad a code.
+func TestSaveMirrorsFirstKPDCode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	s := NewStore(path)
+	if err := s.Update(func(c *Config) {
+		c.Sensors = []SensorEntry{{ID: 14, Type: "KPD", KPDCodes: []KPDCode{{Password: "1234", Label: "Moi"}, {Password: "5678", Label: "Invité"}}}}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var file struct {
+		Sensors []struct {
+			KPDCode      string    `json:"kpd_code"`
+			KPDCodeLabel string    `json:"kpd_code_label"`
+			KPDCodes     []KPDCode `json:"kpd_codes"`
+		} `json:"sensors"`
+	}
+	data, _ := os.ReadFile(path)
+	if err := json.Unmarshal(data, &file); err != nil {
+		t.Fatal(err)
+	}
+	if se := file.Sensors[0]; se.KPDCode != "1234" || se.KPDCodeLabel != "Moi" || len(se.KPDCodes) != 2 {
+		t.Errorf("saved keypad = %+v, want both codes and the first mirrored", se)
+	}
+	if got := s.Get().Sensors[0].KPDCode; got != "" {
+		t.Errorf("the mirror leaked into memory: %q", got)
 	}
 }

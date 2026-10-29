@@ -5,12 +5,14 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -238,9 +240,12 @@ func (s *Server) routes() (*http.ServeMux, error) {
 	mux.HandleFunc("DELETE /api/v1/sensors/{id}", s.cors(s.handleDeleteSensor))
 	mux.HandleFunc("PUT /api/v1/sensors/{id}", s.cors(s.handleUpdateSensor))
 
-	// Ressources — code PIN du clavier. Mono-KPD assumé : s'il y a
+	// Ressources — codes du clavier. Mono-KPD assumé : s'il y a
 	// plusieurs claviers appairés, on répond 409 plutôt que d'en choisir
-	// un au hasard (cf. requireSingleKPD).
+	// un au hasard (cf. requireSingleKPD). /kpd/code est l'ancienne API à
+	// un code, elle agit sur le premier.
+	mux.HandleFunc("GET /api/v1/kpd/codes", s.cors(s.handleGetKPDCodes))
+	mux.HandleFunc("PUT /api/v1/kpd/codes", s.cors(s.handlePutKPDCodes))
 	mux.HandleFunc("GET /api/v1/kpd/code", s.cors(s.handleGetKPDCode))
 	mux.HandleFunc("PUT /api/v1/kpd/code", s.cors(s.handleSetKPDCode))
 	mux.HandleFunc("DELETE /api/v1/kpd/code", s.cors(s.handleDeleteKPDCode))
@@ -1215,10 +1220,10 @@ var (
 	errMultipleKPD = fmt.Errorf("plusieurs claviers appairés, ciblage requis")
 )
 
-// requireSingleKPD résout LE clavier de l'installation. Le modèle assume un
-// KPD unique (contrainte produit : un seul code PIN supporté côté firmware).
-// S'il y en a plusieurs, on refuse explicitement au lieu de choisir.
-func (s *Server) requireSingleKPD() (int, *config.SensorEntry, error) {
+// requireSingleKPD résout LE clavier de l'installation. L'API assume un
+// KPD unique : s'il y en a plusieurs, on refuse explicitement au lieu de
+// choisir.
+func (s *Server) requireSingleKPD() (*config.SensorEntry, error) {
 	cfg := s.store.Get()
 	idx := -1
 	for i, se := range cfg.Sensors {
@@ -1226,14 +1231,14 @@ func (s *Server) requireSingleKPD() (int, *config.SensorEntry, error) {
 			continue
 		}
 		if idx >= 0 {
-			return -1, nil, errMultipleKPD
+			return nil, errMultipleKPD
 		}
 		idx = i
 	}
 	if idx < 0 {
-		return -1, nil, errNoKPD
+		return nil, errNoKPD
 	}
-	return idx, &cfg.Sensors[idx], nil
+	return &cfg.Sensors[idx], nil
 }
 
 // writeKPDErr traduit une erreur de résolution clavier en réponse HTTP :
@@ -1246,95 +1251,139 @@ func writeKPDErr(w http.ResponseWriter, err error) {
 	writeErr(w, http.StatusNotFound, err.Error())
 }
 
-// handleGetKPDCode lit le code PIN du clavier. 404 si aucun clavier n'est
-// appairé — l'absence de clavier est un état différent d'un clavier sans
-// code, que l'ancienne version confondait en renvoyant {"code":null}.
-func (s *Server) handleGetKPDCode(w http.ResponseWriter, r *http.Request) {
-	_, kpd, err := s.requireSingleKPD()
+// maxKPDCodes borne la liste de codes d'un clavier. Ce n'est pas une
+// limite connue du clavier (deux codes vérifiés sur le matériel), mais une
+// marge prudente : la liste entière part dans une trame radio à chaque
+// réveil du clavier.
+const maxKPDCodes = 10
+
+// validateKPDCodes vérifie une liste de codes avant de l'enregistrer :
+// 4 chiffres chacun (en désarmant, le clavier ne remonte que 4 chiffres),
+// pas de doublon, au plus maxKPDCodes. Elle renvoie la liste aux libellés
+// nettoyés de leurs espaces.
+func validateKPDCodes(codes []config.KPDCode) ([]config.KPDCode, error) {
+	if len(codes) > maxKPDCodes {
+		return nil, fmt.Errorf("au plus %d codes par clavier", maxKPDCodes)
+	}
+	out := make([]config.KPDCode, 0, len(codes))
+	for _, c := range codes {
+		if len(c.Password) != 4 || strings.Trim(c.Password, "0123456789") != "" {
+			return nil, errors.New("le code doit être composé de 4 chiffres")
+		}
+		if slices.ContainsFunc(out, func(o config.KPDCode) bool { return o.Password == c.Password }) {
+			return nil, errors.New("deux codes identiques")
+		}
+		out = append(out, config.KPDCode{Password: c.Password, Label: strings.TrimSpace(c.Label)})
+	}
+	return out, nil
+}
+
+// updateKPDCodes applique edit à la liste de codes du clavier, la valide,
+// l'enregistre, et la fait partir au prochain réveil du clavier.
+func (s *Server) updateKPDCodes(w http.ResponseWriter, edit func([]config.KPDCode) []config.KPDCode) {
+	kpd, err := s.requireSingleKPD()
 	if err != nil {
 		writeKPDErr(w, err)
 		return
 	}
-	if kpd.KPDCode == "" {
+	codes, err := validateKPDCodes(edit(kpd.KPDCodes))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.store.Update(func(cfg *config.Config) {
+		if i := slices.IndexFunc(cfg.Sensors, func(se config.SensorEntry) bool { return se.ID == kpd.ID }); i >= 0 {
+			cfg.Sensors[i].KPDCodes = codes
+		}
+	}); err != nil {
+		writeErr(w, http.StatusInternalServerError, "échec sauvegarde: "+err.Error())
+		return
+	}
+
+	// Radio backend: the codes go out at the keypad's next wake.
+	if rc, ok := s.cam.(*camera.RadioClient); ok {
+		rc.Reload()
+	}
+
+	s.log.Info("KPD codes updated", "count", len(codes))
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// handleGetKPDCodes lit les codes du clavier, en clair : l'UI les affiche
+// pour que l'utilisateur les retrouve. 404 si aucun clavier n'est appairé,
+// liste vide pour un clavier sans code.
+func (s *Server) handleGetKPDCodes(w http.ResponseWriter, r *http.Request) {
+	kpd, err := s.requireSingleKPD()
+	if err != nil {
+		writeKPDErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"sensor_id": kpd.ID,
+		"codes":     append([]config.KPDCode{}, kpd.KPDCodes...),
+	})
+}
+
+// handlePutKPDCodes remplace la liste entière : un client la relit, la
+// modifie et la renvoie. Une liste vide est acceptée ; le clavier n'est
+// alors plus servi, car sans code son bouton OFF suffirait à désarmer.
+func (s *Server) handlePutKPDCodes(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Codes []config.KPDCode `json:"codes"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "JSON invalide")
+		return
+	}
+	s.updateKPDCodes(w, func([]config.KPDCode) []config.KPDCode { return body.Codes })
+}
+
+// handleGetKPDCode, handleSetKPDCode et handleDeleteKPDCode sont l'API
+// d'avant /kpd/codes, quand le clavier n'avait qu'un code. Gardées pour les
+// clients existants, elles agissent sur le premier code de la liste.
+func (s *Server) handleGetKPDCode(w http.ResponseWriter, r *http.Request) {
+	kpd, err := s.requireSingleKPD()
+	if err != nil {
+		writeKPDErr(w, err)
+		return
+	}
+	if len(kpd.KPDCodes) == 0 {
 		writeJSON(w, http.StatusOK, map[string]any{"sensor_id": kpd.ID, "code": nil})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"sensor_id": kpd.ID,
 		"code": map[string]any{
-			"password": kpd.KPDCode,
-			"label":    kpd.KPDCodeLabel,
+			"password": kpd.KPDCodes[0].Password,
+			"label":    kpd.KPDCodes[0].Label,
 		},
 	})
 }
 
 func (s *Server) handleSetKPDCode(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Password string `json:"password"`
-		Label    string `json:"label"`
-	}
+	var body config.KPDCode
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, "JSON invalide")
 		return
 	}
-	if len(body.Password) != 4 {
-		writeErr(w, http.StatusBadRequest, "le code doit être composé de 4 chiffres")
-		return
-	}
-	for _, c := range body.Password {
-		if c < '0' || c > '9' {
-			writeErr(w, http.StatusBadRequest, "le code doit être composé de 4 chiffres")
-			return
-		}
-	}
 	if body.Label == "" {
 		body.Label = "Code"
 	}
-
-	idx, _, err := s.requireSingleKPD()
-	if err != nil {
-		writeKPDErr(w, err)
-		return
-	}
-
-	if err := s.store.Update(func(cfg *config.Config) {
-		cfg.Sensors[idx].KPDCode = body.Password
-		cfg.Sensors[idx].KPDCodeLabel = body.Label
-	}); err != nil {
-		writeErr(w, http.StatusInternalServerError, "échec sauvegarde: "+err.Error())
-		return
-	}
-
-	// Radio backend: the code goes out at the keypad's next wake.
-	if rc, ok := s.cam.(*camera.RadioClient); ok {
-		rc.Reload()
-	}
-
-	s.log.Info("KPD code updated", "label", body.Label)
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	s.updateKPDCodes(w, func(codes []config.KPDCode) []config.KPDCode {
+		if len(codes) == 0 {
+			return []config.KPDCode{body}
+		}
+		return append([]config.KPDCode{body}, codes[1:]...)
+	})
 }
 
 func (s *Server) handleDeleteKPDCode(w http.ResponseWriter, r *http.Request) {
-	idx, _, err := s.requireSingleKPD()
-	if err != nil {
-		writeKPDErr(w, err)
-		return
-	}
-
-	if err := s.store.Update(func(cfg *config.Config) {
-		cfg.Sensors[idx].KPDCode = ""
-		cfg.Sensors[idx].KPDCodeLabel = ""
-	}); err != nil {
-		writeErr(w, http.StatusInternalServerError, "échec sauvegarde: "+err.Error())
-		return
-	}
-
-	if rc, ok := s.cam.(*camera.RadioClient); ok {
-		rc.Reload()
-	}
-
-	s.log.Info("KPD code deleted")
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	s.updateKPDCodes(w, func(codes []config.KPDCode) []config.KPDCode {
+		if len(codes) == 0 {
+			return nil
+		}
+		return codes[1:]
+	})
 }
 
 func (s *Server) handleShutter(w http.ResponseWriter, r *http.Request) {

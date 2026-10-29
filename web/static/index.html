@@ -127,10 +127,10 @@ a { color: var(--primary); }
     </div>
 
     <div class="card">
-      <div class="card-title" style="margin-bottom:12px">Code clavier (KPD)</div>
+      <div class="card-title" style="margin-bottom:12px">Codes clavier (KPD)</div>
       <div id="codes-list" style="margin-bottom:12px"></div>
       <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:12px">
-        <div style="font-size:14px;font-weight:500;margin-bottom:8px">Modifier le code</div>
+        <div style="font-size:14px;font-weight:500;margin-bottom:8px">Ajouter un code</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
           <div class="form-group" style="margin-bottom:0;flex:1;min-width:100px">
             <label>Code (4 chiffres)</label>
@@ -138,11 +138,11 @@ a { color: var(--primary); }
           </div>
           <div class="form-group" style="margin-bottom:0;flex:1;min-width:100px">
             <label>Libellé</label>
-            <input type="text" id="code-label" placeholder="admin">
+            <input type="text" id="code-label" placeholder="Moi, Invité…">
           </div>
-          <button class="btn btn-primary" onclick="addCode()">Enregistrer</button>
+          <button class="btn btn-primary" onclick="addCode()">Ajouter</button>
         </div>
-        <p style="color:var(--text-muted);font-size:12px;margin-top:8px">Le code sera actif au prochain démarrage du clavier (cycle batterie)</p>
+        <p style="color:var(--text-muted);font-size:12px;margin-top:8px">Jusqu'à 10 codes. Ils sont actifs au prochain réveil du clavier (appui sur une touche).</p>
       </div>
       <div id="codes-msg"></div>
     </div>
@@ -672,86 +672,86 @@ async function setAlarm(action) {
   }
 }
 
-// --- KPD Code ---
+// --- KPD Codes ---
+// The list as last read: add and delete PUT it back whole.
+let kpdCodes = [];
+
 async function fetchCodes() {
   const list = document.getElementById('codes-list');
   try {
-    const r = await fetch(V1 + '/kpd/code');
+    const r = await fetch(V1 + '/kpd/codes');
     const d = await r.json();
     if (d.error) {
       // 404 = aucun clavier appairé (état normal, pas une panne).
       // 409 = plusieurs claviers : le serveur refuse de choisir.
       const cls = r.status === 409 ? 'error' : 'info';
       list.innerHTML = '<div class="msg ' + cls + '">' + escapeHTML(d.error) + '</div>';
-      document.getElementById('code-pwd').value = '';
-      document.getElementById('code-label').value = '';
+      kpdCodes = [];
       return;
     }
-    if (!d.code) {
-      list.innerHTML = '<div style="color:var(--text-muted);font-size:13px">Aucun code configuré</div>';
-      document.getElementById('code-pwd').value = '';
-      document.getElementById('code-label').value = '';
+    kpdCodes = d.codes;
+    if (!kpdCodes.length) {
+      list.innerHTML = '<div style="color:var(--text-muted);font-size:13px">Aucun code configuré : le clavier ne peut ni armer ni désarmer</div>';
       return;
     }
-    list.innerHTML = `
-      <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--surface);border-radius:6px;border:1px solid var(--border)">
+    list.innerHTML = kpdCodes.map((c, i) => `
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;margin-bottom:6px;background:var(--surface);border-radius:6px;border:1px solid var(--border)">
         <div>
-          <span style="font-weight:500">${escapeHTML(d.code.label || 'Code')}</span>
-          <span style="color:var(--text-muted);margin-left:8px;font-family:monospace">${escapeHTML(d.code.password)}</span>
+          <span style="font-weight:500">${escapeHTML(c.label || 'Code ' + (i + 1))}</span>
+          <span style="color:var(--text-muted);margin-left:8px;font-family:monospace">${escapeHTML(c.password)}</span>
         </div>
-        <button class="btn-icon" onclick="deleteCode()" title="Supprimer">🗑️</button>
-      </div>`;
-    document.getElementById('code-pwd').value = d.code.password;
-    document.getElementById('code-label').value = d.code.label || '';
+        <button class="btn-icon" onclick="deleteCode(${i})" title="Supprimer">🗑️</button>
+      </div>`).join('');
   } catch (e) {
-    list.innerHTML = '<div class="msg error">Erreur chargement code</div>';
+    list.innerHTML = '<div class="msg error">Erreur chargement des codes</div>';
+  }
+}
+
+async function saveCodes(codes, done) {
+  const msg = document.getElementById('codes-msg');
+  msg.textContent = '';
+  try {
+    const r = await fetch(V1 + '/kpd/codes', {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({codes: codes})
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    msg.className = 'msg success';
+    msg.textContent = done;
+    fetchCodes();
+    return true;
+  } catch (e) {
+    msg.className = 'msg error';
+    msg.textContent = e.message;
+    return false;
   }
 }
 
 async function addCode() {
   const pwd = document.getElementById('code-pwd').value.trim();
-  const label = document.getElementById('code-label').value.trim() || 'Code';
+  const label = document.getElementById('code-label').value.trim() || 'Code ' + (kpdCodes.length + 1);
   const msg = document.getElementById('codes-msg');
-  msg.textContent = '';
 
   if (!/^\d{4}$/.test(pwd)) {
     msg.className = 'msg error';
     msg.textContent = 'Le code doit être composé de 4 chiffres';
     return;
   }
-
-  try {
-    const r = await fetch(V1 + '/kpd/code', {
-      method: 'PUT',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({password: pwd, label: label})
-    });
-    const d = await r.json();
-    if (d.error) throw new Error(d.error);
-    msg.className = 'msg success';
-    msg.textContent = 'Code enregistré. Actif au prochain cycle batterie du clavier.';
-    fetchCodes();
-  } catch (e) {
-    msg.className = 'msg error';
-    msg.textContent = e.message;
+  if (await saveCodes([...kpdCodes, {password: pwd, label: label}],
+      'Code ajouté. Actif au prochain réveil du clavier.')) {
+    document.getElementById('code-pwd').value = '';
+    document.getElementById('code-label').value = '';
   }
 }
 
-async function deleteCode() {
-  if (!confirm('Supprimer le code ?')) return;
-  const msg = document.getElementById('codes-msg');
-  msg.textContent = '';
-  try {
-    const r = await fetch(V1 + '/kpd/code', {method: 'DELETE'});
-    const d = await r.json();
-    if (d.error) throw new Error(d.error);
-    msg.className = 'msg success';
-    msg.textContent = 'Code supprimé.';
-    fetchCodes();
-  } catch (e) {
-    msg.className = 'msg error';
-    msg.textContent = e.message;
-  }
+async function deleteCode(i) {
+  const question = kpdCodes.length === 1
+    ? 'Supprimer le dernier code ? Sans code, le clavier ne pourra plus ni armer ni désarmer l\'alarme.'
+    : 'Supprimer le code « ' + (kpdCodes[i].label || 'Code ' + (i + 1)) + ' » ?';
+  if (!confirm(question)) return;
+  await saveCodes(kpdCodes.filter((_, j) => j !== i), 'Code supprimé.');
 }
 
 // --- Config ---

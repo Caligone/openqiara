@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"sync"
 	"testing"
@@ -90,7 +91,7 @@ var testKey = [32]byte{0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 31: 0xff}
 
 // The production camera's sensors, with made-up UIDs and code.
 var (
-	kpd = config.SensorEntry{ID: 14, Type: "KPD", KPDCode: "1234", Radio: config.RadioNode{Addr: 2, UID: "0000000000000014", SystemIndex: 0}}
+	kpd = config.SensorEntry{ID: 14, Type: "KPD", KPDCodes: []config.KPDCode{{Password: "1234"}}, Radio: config.RadioNode{Addr: 2, UID: "0000000000000014", SystemIndex: 0}}
 	dws = config.SensorEntry{ID: 23, Type: "DWS", Radio: config.RadioNode{Addr: 5, UID: "0000000000000023", SystemIndex: 2}}
 	srn = config.SensorEntry{ID: 29, Type: "SRN", Radio: config.RadioNode{Addr: 6, UID: "0000000000000029", SystemIndex: 3}}
 )
@@ -307,12 +308,12 @@ func TestRadioReachability(t *testing.T) {
 }
 
 // TestRadioSensorsNotServed: a sensor without a radio address, or a keypad
-// whose code is not valid or not set, is not served and shows
+// with a code that is not valid or with no code, is not served and shows
 // unreachable; the keypad is not left to disarm with its off button alone.
 func TestRadioSensorsNotServed(t *testing.T) {
-	for _, code := range []string{"12a4", ""} {
+	for _, codes := range [][]config.KPDCode{{{Password: "1234"}, {Password: "12a4"}}, nil} {
 		badKPD := kpd
-		badKPD.KPDCode = code
+		badKPD.KPDCodes = codes
 		testRadioSensorsNotServed(t, badKPD)
 	}
 }
@@ -406,21 +407,29 @@ func TestRadioDeleteSensor(t *testing.T) {
 	}
 }
 
-// TestRadioKeypadCode: a new code in the config goes out at the keypad's
-// next wake after Reload.
+// TestRadioKeypadCode: new codes in the config go out at the keypad's
+// next wake after Reload, all of them, in order.
 func TestRadioKeypadCode(t *testing.T) {
 	c, mcu, store := newRadio(t, kpd)
 	if err := store.Update(func(cfg *config.Config) {
 		cfg.Sensors = []config.SensorEntry{kpd}
-		cfg.Sensors[0].KPDCode = "5678"
+		cfg.Sensors[0].KPDCodes = []config.KPDCode{{Password: "5678"}, {Password: "1357", Label: "Invité"}}
 	}); err != nil {
 		t.Fatal(err)
 	}
 	c.Reload()
 	mcu.rx(fromSensor(2, 3, 0x01, 0x55, 0x09))
-	// '5'..'8' are 4..7, two digits a byte, low nibble first.
-	if f := mcu.sent(t); !bytes.Equal(f.Payload, []byte{0x03, 0x00, 0x04, 0x54, 0x76}) {
-		t.Errorf("code list = %x", f.Payload)
+	// A byte count, then each code: its length, its digits two a byte,
+	// low nibble first, '1'..'9' as 0..8 ('5'..'8' are 4..7).
+	want := []byte{0x06, 0x00, 0x04, 0x54, 0x76, 0x04, 0x20, 0x64}
+	if f := mcu.sent(t); !bytes.Equal(f.Payload, want) {
+		t.Errorf("code list = %x, want %x", f.Payload, want)
+	}
+	if got := c.codeLabel(14, "1357"); got != "Invité" {
+		t.Errorf("label of the second code = %q", got)
+	}
+	if got := c.codeLabel(14, "5678"); got != "#1" {
+		t.Errorf("label of an unnamed code = %q, want its rank", got)
 	}
 }
 
@@ -432,6 +441,8 @@ const fbxhomeXMLTemplate = `<?xml version="1.0" encoding="utf-8"?>
   </Node>
   <Node adapter="12" discarded="false" domus_addr="2" domus_ch_key="secret" domus_item_id="00000000000000aa" domus_key="secret" id="14" system_index="0" type="Node.DomusNode.HLKpd">
     <Code label="admin" password="0000" valid="true" />
+    <Code label="ancien" password="1111" valid="false" />
+    <Code label="invité" password="2222" valid="true" />
   </Node>
   <Node adapter="12" battery="255" discarded="false" domus_addr="3" domus_item_id="00000000000000bb" id="17" system_index="1" type="Node.DomusNode.HlPir">
   </Node>
@@ -452,8 +463,8 @@ func writeFbxhomeXML(t *testing.T, path string, counter, next string) {
 }
 
 // TestImportFbxhomeRadio: the newest fbxhome state that reads gives the
-// sensors their radio identity by id, and the keypad fbxhome's code when
-// the config has none; deleted sensors and sensors that have one are
+// sensors their radio identity by id, and the keypad fbxhome's valid
+// codes when the config has none; deleted sensors and sensors that have one are
 // left alone.
 func TestImportFbxhomeRadio(t *testing.T) {
 	dir := t.TempDir()
@@ -485,11 +496,11 @@ func TestImportFbxhomeRadio(t *testing.T) {
 	}
 	cfg := store.Get()
 	want := []config.SensorEntry{
-		{ID: 14, Type: "KPD", KPDCode: "0000", Radio: config.RadioNode{Addr: 2, UID: "00000000000000aa"}},
+		{ID: 14, Type: "KPD", KPDCodes: []config.KPDCode{{Password: "0000", Label: "admin"}, {Password: "2222", Label: "invité"}}, Radio: config.RadioNode{Addr: 2, UID: "00000000000000aa"}},
 		{ID: 29, Type: "SRN", Radio: paired},
 		{ID: 17, Type: "PIR", Radio: config.RadioNode{Addr: 3, UID: "00000000000000bb", SystemIndex: 1}, Battery: 255},
 	}
-	if !slices.Equal(cfg.Sensors, want) || cfg.RadioNextAddr != 7 {
+	if !reflect.DeepEqual(cfg.Sensors, want) || cfg.RadioNextAddr != 7 {
 		t.Errorf("config = %+v next %d,\nwant %+v next 7", cfg.Sensors, cfg.RadioNextAddr, want)
 	}
 

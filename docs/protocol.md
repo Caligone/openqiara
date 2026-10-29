@@ -334,7 +334,7 @@ the opcode.
 
 The keypad uses opcode `0x55 09` heartbeats and `0x55 04` button events. See
 [`docs/kpd.md`](kpd.md) for the full KPD protocol details — it has its own
-quirks (FNV verification loop, single-PIN limitation, ~60 s wake window).
+quirks (FNV verification loop, code list pushed on every wake, ~60 s wake window).
 
 ### 6.4 Status heartbeats (`f1 XX YY`) — WARNING: not opcodes
 
