@@ -269,10 +269,12 @@ type SensorEntry struct {
 	Type         string `json:"type"`
 	Model        string `json:"model"`
 	Label        string `json:"label,omitempty"`
-	KPDCode      string `json:"kpd_code,omitempty"`
-	KPDCodeLabel string `json:"kpd_code_label,omitempty"`
 	NightAllowed bool   `json:"night_allowed,omitempty"` // ignored by the alarm when armed for the night
 	Instant      bool   `json:"instant,omitempty"`       // fires the siren with no entry delay
+
+	// KPDCodes are the codes a keypad accepts: it gets the list each time
+	// it wakes up and checks a typed code against it itself.
+	KPDCodes []KPDCode `json:"kpd_codes,omitempty"`
 
 	// Radio is where the sensor sits on the radio network: set at
 	// pairing, imported from fbxhome.xml at the first start.
@@ -283,6 +285,12 @@ type SensorEntry struct {
 	// Temperature is the last one the sensor reported, in °C; nil before
 	// the first. Kept across restarts, sensors send it rarely.
 	Temperature *int `json:"temperature,omitempty"`
+}
+
+// KPDCode is a code a keypad accepts.
+type KPDCode struct {
+	Password string `json:"password"` // 4 digits
+	Label    string `json:"label,omitempty"`
 }
 
 // RadioNode is a sensor's place on the radio network. Addr 0 means none.
@@ -327,6 +335,7 @@ func (s *Store) Load() error {
 		return fmt.Errorf("parse config: %w", err)
 	}
 	migrateNightAlarm(&s.cfg, data)
+	migrateKPDCode(&s.cfg, data)
 
 	// Migration legacy : si on a un password en clair (ancien schéma)
 	// et pas de hash, on hash maintenant. Le Save() est différé jusqu'à
@@ -367,6 +376,32 @@ func migrateNightAlarm(cfg *Config, data []byte) {
 		for i := range cfg.Sensors {
 			if cfg.Sensors[i].ID == l.ID {
 				cfg.Sensors[i].NightAllowed = !*l.NightAlarm
+			}
+		}
+	}
+}
+
+// migrateKPDCode turns kpd_code, a keypad's single code before
+// kpd_codes, into its code list; kpd_codes wins when both are there.
+// kpd_code is dropped at the next save.
+func migrateKPDCode(cfg *Config, data []byte) {
+	var legacy struct {
+		Sensors []struct {
+			ID    int    `json:"id"`
+			Code  string `json:"kpd_code"`
+			Label string `json:"kpd_code_label"`
+		} `json:"sensors"`
+	}
+	if json.Unmarshal(data, &legacy) != nil {
+		return
+	}
+	for _, l := range legacy.Sensors {
+		if l.Code == "" {
+			continue
+		}
+		for i := range cfg.Sensors {
+			if se := &cfg.Sensors[i]; se.ID == l.ID && len(se.KPDCodes) == 0 {
+				se.KPDCodes = []KPDCode{{Password: l.Code, Label: l.Label}}
 			}
 		}
 	}
@@ -435,6 +470,9 @@ func (s *Store) Update(fn func(*Config)) error {
 
 func (c Config) clone() Config {
 	c.Sensors = slices.Clone(c.Sensors)
+	for i := range c.Sensors {
+		c.Sensors[i].KPDCodes = slices.Clone(c.Sensors[i].KPDCodes)
+	}
 	c.DeletedIDs = slices.Clone(c.DeletedIDs)
 	return c
 }

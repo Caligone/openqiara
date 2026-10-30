@@ -54,7 +54,7 @@ de `/data/openqiarad.log`. Les PR sont les bienvenues.
 |---------|--------|
 | Events détecteurs d'ouverture (DWS) | ✅ |
 | Events mouvement PIR | ✅ |
-| Clavier (KPD) PIN + armement/désarmement | ✅ (un seul PIN) |
+| Clavier (KPD) codes + armement/désarmement | ✅ (jusqu'à 10 codes) |
 | Déclenchement sirène (SRN) | ✅ (son discret ; voir limitations pour le wail pleine puissance) |
 | Moteur d'alarme autonome | ✅ (source Local/Remote, grâce post-armement) |
 | Mode bridge Alarmo | ✅ |
@@ -84,9 +84,6 @@ les capteurs livrés à l'origine avec un kit Qiara fonctionnent.
 Voici les rugosités identifiées. Elles sont pour la plupart inhérentes au fait
 de tourner offline sur un firmware constructeur conçu pour un cloud désormais
 mort — pas des bugs à corriger en bidouillant `openqiarad`.
-
-- **PIN clavier.** Un seul PIN par clavier. Ajouter un second code via l'API
-  stock nécessite une autorisation cloud et échoue silencieusement en offline.
 
 - **Sirène après remise sous tension physique.** Débrancher puis rebrancher le
   SRN peut le laisser `reachable=1` mais muet, ou complètement injoignable.

@@ -504,37 +504,43 @@
         }
       }
     },
-    "/api/v1/kpd/code": {
+    "/api/v1/kpd/codes": {
       "get": {
         "tags": [
           "Clavier"
         ],
-        "summary": "Lire le code du clavier",
-        "operationId": "getKPDCode",
+        "summary": "Lire les codes du clavier",
+        "operationId": "getKPDCodes",
         "responses": {
           "200": {
-            "description": "Code configuré, ou `null`.",
+            "description": "Codes configurés, liste vide si le clavier n'en a pas.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/KPDCode"
+                  "$ref": "#/components/schemas/KPDCodes"
                 },
                 "examples": {
                   "configured": {
-                    "summary": "Code défini",
+                    "summary": "Deux codes",
                     "value": {
                       "sensor_id": 14,
-                      "code": {
-                        "password": "4821",
-                        "label": "admin"
-                      }
+                      "codes": [
+                        {
+                          "password": "4821",
+                          "label": "Moi"
+                        },
+                        {
+                          "password": "1357",
+                          "label": "Invité"
+                        }
+                      ]
                     }
                   },
                   "empty": {
                     "summary": "Clavier sans code",
                     "value": {
                       "sensor_id": 14,
-                      "code": null
+                      "codes": []
                     }
                   }
                 }
@@ -570,15 +576,32 @@
         "tags": [
           "Clavier"
         ],
-        "summary": "Définir le code du clavier",
-        "operationId": "setKPDCode",
-        "description": "Le code est persisté immédiatement. L'écriture radio vers le clavier est différée jusqu'à trente secondes si celui-ci vient d'être appairé : écrire pendant son cycle d'initialisation le désynchronise.",
+        "summary": "Remplacer les codes du clavier",
+        "operationId": "setKPDCodes",
+        "description": "Remplace la liste entière : relire, modifier, renvoyer. Les codes sont persistés immédiatement et partent au prochain réveil du clavier, qui vérifie lui-même le code tapé. Une liste vide est acceptée : le clavier n'est alors plus servi (sans code, sa touche OFF suffirait à désarmer). Une liste refusée n'est pas enregistrée, même en partie.",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/KPDCodeUpdate"
+                "$ref": "#/components/schemas/KPDCodesUpdate"
+              },
+              "examples": {
+                "two": {
+                  "summary": "Deux codes",
+                  "value": {
+                    "codes": [
+                      {
+                        "password": "4821",
+                        "label": "Moi"
+                      },
+                      {
+                        "password": "1357",
+                        "label": "Invité"
+                      }
+                    ]
+                  }
+                }
               }
             }
           }
@@ -595,63 +618,11 @@
             }
           },
           "400": {
-            "description": "Le code doit comporter exactement quatre chiffres.",
+            "description": "Liste refusée : un code qui n'est pas exactement quatre chiffres, deux codes identiques, ou plus de dix codes.",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "404": {
-            "description": "Aucun clavier appairé.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Plusieurs claviers appairés : l'API refuse d'en choisir un.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Échec de la sauvegarde.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "Clavier"
-        ],
-        "summary": "Supprimer le code du clavier",
-        "operationId": "deleteKPDCode",
-        "responses": {
-          "200": {
-            "description": "Effectué.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OK"
                 }
               }
             }
@@ -2773,12 +2744,35 @@
           }
         }
       },
-      "KPDCode": {
+      "KPDCodeEntry": {
         "type": "object",
-        "description": "Code PIN du clavier. Renvoyé en clair : c'est celui qui désarme l'alarme, l'interface l'affiche pour que l'utilisateur le retrouve. Ne pas exposer cette API hors du réseau local.",
+        "required": [
+          "password"
+        ],
+        "properties": {
+          "password": {
+            "type": "string",
+            "pattern": "^[0-9]{4}$",
+            "description": "Exactement 4 chiffres.",
+            "examples": [
+              "4821"
+            ]
+          },
+          "label": {
+            "type": "string",
+            "description": "Nom du code, absent s'il n'en a pas. Les espaces autour sont retirés.",
+            "examples": [
+              "Moi"
+            ]
+          }
+        }
+      },
+      "KPDCodes": {
+        "type": "object",
+        "description": "Codes du clavier, renvoyés en clair : ce sont eux qui désarment l'alarme, l'interface les affiche pour que l'utilisateur les retrouve. Ne pas exposer cette API hors du réseau local.",
         "required": [
           "sensor_id",
-          "code"
+          "codes"
         ],
         "properties": {
           "sensor_id": {
@@ -2788,57 +2782,27 @@
               14
             ]
           },
-          "code": {
-            "description": "Code configuré, ou `null` si le clavier n'en a pas.",
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "type": "object",
-                "required": [
-                  "password",
-                  "label"
-                ],
-                "properties": {
-                  "password": {
-                    "type": "string",
-                    "pattern": "^[0-9]{4}$",
-                    "examples": [
-                      "4821"
-                    ]
-                  },
-                  "label": {
-                    "type": "string",
-                    "description": "Nom du code. Vaut `Code` si rien n'a été précisé.",
-                    "examples": [
-                      "admin"
-                    ]
-                  }
-                }
-              }
-            ]
+          "codes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KPDCodeEntry"
+            }
           }
         }
       },
-      "KPDCodeUpdate": {
+      "KPDCodesUpdate": {
         "type": "object",
         "required": [
-          "password"
+          "codes"
         ],
         "properties": {
-          "password": {
-            "type": "string",
-            "pattern": "^[0-9]{4}$",
-            "description": "Exactement 4 chiffres. Le firmware n'en accepte qu'un seul par installation.",
-            "examples": [
-              "4821"
-            ]
-          },
-          "label": {
-            "type": "string",
-            "description": "Nom du code.",
-            "default": "Code"
+          "codes": {
+            "type": "array",
+            "maxItems": 10,
+            "description": "La liste complète, sans doublon. Au plus 10 codes : marge prudente, pas une limite connue du clavier.",
+            "items": {
+              "$ref": "#/components/schemas/KPDCodeEntry"
+            }
           }
         }
       },
