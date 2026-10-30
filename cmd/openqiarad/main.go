@@ -489,10 +489,15 @@ func main() {
 	// drives it, and in alarmo mode sirenCtrl mirrors Alarmo's state on it.
 	siren := alarm.NewSirenDriver(nativeSiren{ctx: ctx, cam: cam, store: store}, logger)
 	sirenCtrl := newSirenController(ctx, siren)
+	// The privacy shutter follows the alarm if asked to
+	// (alarm.shutter_follows_alarm), in both modes: open while set, closed
+	// while disarmed. The option is read at each change, no restart needed.
+	shutterCtrl := newShutterController(ctx, cam.SetShutter, func() bool { return store.Get().Alarm.ShutterFollowsAlarm }, logger)
 
 	alarmStateCallback := func(snap alarm.Snapshot) {
 		logger.Info("alarm state", "state", snap.State, "prev", snap.PreviousState, "trigger", snap.TriggeredBy, "remaining", snap.TimerRemaining)
 		setAlarmState(string(snap.State))
+		shutterCtrl.Handle(string(snap.State))
 		if webSrv == nil {
 			for _, p := range pubs {
 				_ = p.PublishAlarmState(ctx, string(snap.State))
@@ -529,6 +534,7 @@ func main() {
 		}
 		initSnap := alarmEngine.Snapshot()
 		setAlarmState(string(initSnap.State))
+		shutterCtrl.Handle(string(initSnap.State)) // the restored state: moves nothing
 		// Push the restored state to every publisher. Load() restores the
 		// state without firing onChange, and MQTT's Start() publishes a
 		// hard "disarmed" retained at discovery — so without this, HA/HomeKit
@@ -624,6 +630,7 @@ func main() {
 				_ = p.PublishAlarmState(ctx, state)
 			}
 			sirenCtrl.Handle(state)
+			shutterCtrl.Handle(state)
 			setAlarmState(state)
 		})
 	}

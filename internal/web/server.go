@@ -785,6 +785,7 @@ func (s *Server) alarmConfigPayload() map[string]any {
 		"arming_delay_seconds":  int(cfg.ArmingDelay().Seconds()),
 		"pending_delay_seconds": int(cfg.PendingDelay().Seconds()),
 		"wail_duration_seconds": int(cfg.WailDuration().Seconds()),
+		"shutter_follows_alarm": cfg.Alarm.ShutterFollowsAlarm,
 	}
 }
 
@@ -797,6 +798,7 @@ func (s *Server) handleUpdateAlarm(w http.ResponseWriter, r *http.Request) {
 		ArmingDelaySeconds  *int    `json:"arming_delay_seconds,omitempty"`
 		PendingDelaySeconds *int    `json:"pending_delay_seconds,omitempty"`
 		WailDurationSeconds *int    `json:"wail_duration_seconds,omitempty"`
+		ShutterFollowsAlarm *bool   `json:"shutter_follows_alarm,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, "JSON invalide")
@@ -849,6 +851,9 @@ func (s *Server) handleUpdateAlarm(w http.ResponseWriter, r *http.Request) {
 		}
 		if body.WailDurationSeconds != nil {
 			cfg.Alarm.WailDurationSeconds = *body.WailDurationSeconds
+		}
+		if body.ShutterFollowsAlarm != nil {
+			cfg.Alarm.ShutterFollowsAlarm = *body.ShutterFollowsAlarm
 		}
 	})
 	if err != nil {

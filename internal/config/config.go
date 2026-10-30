@@ -82,6 +82,12 @@ type AlarmConfig struct {
 	// WailDurationSeconds is how long the alert lasts, counted by the siren
 	// in 2 s steps, 510 s at most (default 300 s). 0 means "use default".
 	WailDurationSeconds int `json:"wail_duration_seconds,omitempty"`
+
+	// ShutterFollowsAlarm opens the privacy shutter when the alarm is set,
+	// from its exit delay on, and closes it once disarmed: hlcamd's streams
+	// pause with it. Only those changes move it, a shutter moved by hand
+	// stays so until the next one. Off by default.
+	ShutterFollowsAlarm bool `json:"shutter_follows_alarm,omitempty"`
 }
 
 // Defaults for alarm timings, exposed so other packages don't redeclare them.
