@@ -1,7 +1,6 @@
 package config
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
@@ -228,9 +227,8 @@ func TestMigrateNightAlarm(t *testing.T) {
 	}
 }
 
-// TestMigrateKPDCode: a keypad's single kpd_code becomes its code list;
-// a file that has kpd_codes keeps them, kpd_code only mirroring the
-// first.
+// TestMigrateKPDCode: a keypad's single kpd_code becomes its code list,
+// and is no longer saved; a file that has kpd_codes keeps them.
 func TestMigrateKPDCode(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	old := `{"sensors": [
@@ -254,38 +252,12 @@ func TestMigrateKPDCode(t *testing.T) {
 		if !slices.Equal(se.KPDCodes, want[se.ID]) {
 			t.Errorf("sensor %d: codes = %+v, want %+v", se.ID, se.KPDCodes, want[se.ID])
 		}
-		if se.KPDCode != "" || se.KPDCodeLabel != "" {
-			t.Errorf("sensor %d: kpd_code %q %q left in memory", se.ID, se.KPDCode, se.KPDCodeLabel)
-		}
 	}
-}
-
-// TestSaveMirrorsFirstKPDCode: the file keeps the first code where an
-// openqiarad from before kpd_codes reads it, so that a downgrade still
-// serves the keypad a code.
-func TestSaveMirrorsFirstKPDCode(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.json")
-	s := NewStore(path)
-	if err := s.Update(func(c *Config) {
-		c.Sensors = []SensorEntry{{ID: 14, Type: "KPD", KPDCodes: []KPDCode{{Password: "1234", Label: "Moi"}, {Password: "5678", Label: "Invité"}}}}
-	}); err != nil {
+	if err := s.Save(); err != nil {
 		t.Fatal(err)
 	}
-	var file struct {
-		Sensors []struct {
-			KPDCode      string    `json:"kpd_code"`
-			KPDCodeLabel string    `json:"kpd_code_label"`
-			KPDCodes     []KPDCode `json:"kpd_codes"`
-		} `json:"sensors"`
-	}
-	data, _ := os.ReadFile(path)
-	if err := json.Unmarshal(data, &file); err != nil {
-		t.Fatal(err)
-	}
-	if se := file.Sensors[0]; se.KPDCode != "1234" || se.KPDCodeLabel != "Moi" || len(se.KPDCodes) != 2 {
-		t.Errorf("saved keypad = %+v, want both codes and the first mirrored", se)
-	}
-	if got := s.Get().Sensors[0].KPDCode; got != "" {
-		t.Errorf("the mirror leaked into memory: %q", got)
+	saved, _ := os.ReadFile(path)
+	if strings.Contains(string(saved), `"kpd_code"`) || strings.Contains(string(saved), "kpd_code_label") {
+		t.Errorf("kpd_code still saved:\n%s", saved)
 	}
 }

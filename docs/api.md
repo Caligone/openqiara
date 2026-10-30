@@ -29,7 +29,7 @@ d'une route inexistante :
 - **`410 Gone`** — une route non versionnée, retirée définitivement. Les
   correspondances sont dans les tableaux ci-dessous ; elles ne sont pas
   calculables mécaniquement (`/api/alarm` est devenu
-  `/api/v1/commands/alarm`, `/api/codes` est devenu `/api/v1/kpd/code`).
+  `/api/v1/commands/alarm`, `/api/codes` est devenu `/api/v1/kpd/codes`).
 - **`404 Not Found`** — une route `/api/v1/…` absente de cette version :
   faute de frappe, méthode non supportée, ou route plus récente que le
   daemon installé. Réessayer après mise à jour a du sens, là où un `410`
@@ -148,16 +148,6 @@ reçoit la liste à chaque réveil et vérifie lui-même le code tapé.
   peut plus ni armer ni désarmer (sans code, sa touche OFF suffirait à
   désarmer).
 - Une liste refusée (`400`) n'est pas enregistrée, même en partie.
-
-L'ancienne API à un seul code reste servie pour les clients existants.
-Elle agit sur le **premier** code de la liste et laisse les autres
-intacts :
-
-| Méthode | Chemin | Corps | Réponse |
-|---|---|---|---|
-| `GET` | `/api/v1/kpd/code` | — | `{sensor_id, code: {password, label} \| null}` |
-| `PUT` | `/api/v1/kpd/code` | `{password, label?}` | `{ok:true}` |
-| `DELETE` | `/api/v1/kpd/code` | — | `{ok:true}` |
 
 Le modèle assume **un seul clavier** :
 

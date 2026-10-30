@@ -97,31 +97,3 @@ func TestKPDCodesRejected(t *testing.T) {
 		})
 	}
 }
-
-// TestKPDCodeLegacyRoutes: /kpd/code, the API from when the keypad had a
-// single code, reads, replaces and deletes the first code and leaves the
-// others alone.
-func TestKPDCodeLegacyRoutes(t *testing.T) {
-	h, store := kpdTestServer(t, []config.KPDCode{{Password: "1111", Label: "Moi"}, {Password: "2222", Label: "Invité"}})
-
-	if code, body := kpdRequest(t, h, "GET", "/api/v1/kpd/code", ""); code != http.StatusOK ||
-		!strings.Contains(body, `"code":{"label":"Moi","password":"1111"}`) {
-		t.Errorf("GET = %d %s, want the first code", code, body)
-	}
-	if code, body := kpdRequest(t, h, "PUT", "/api/v1/kpd/code", `{"password":"3333"}`); code != http.StatusOK {
-		t.Fatalf("PUT = %d %s", code, body)
-	}
-	want := []config.KPDCode{{Password: "3333", Label: "Code"}, {Password: "2222", Label: "Invité"}}
-	if got := storedCodes(store); !reflect.DeepEqual(got, want) {
-		t.Errorf("after PUT: %+v, want %+v", got, want)
-	}
-	if code, body := kpdRequest(t, h, "PUT", "/api/v1/kpd/code", `{"password":"2222"}`); code != http.StatusBadRequest {
-		t.Errorf("PUT of the second code as the first = %d %s, want 400", code, body)
-	}
-	if code, body := kpdRequest(t, h, "DELETE", "/api/v1/kpd/code", ""); code != http.StatusOK {
-		t.Fatalf("DELETE = %d %s", code, body)
-	}
-	if got := storedCodes(store); !reflect.DeepEqual(got, want[1:]) {
-		t.Errorf("after DELETE: %+v, want %+v", got, want[1:])
-	}
-}

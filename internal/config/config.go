@@ -275,12 +275,6 @@ type SensorEntry struct {
 	// KPDCodes are the codes a keypad accepts: it gets the list each time
 	// it wakes up and checks a typed code against it itself.
 	KPDCodes []KPDCode `json:"kpd_codes,omitempty"`
-	// KPDCode and KPDCodeLabel are the first of KPDCodes, in the file
-	// only: an openqiarad from before kpd_codes reads them alone, and
-	// once downgraded still serves the keypad a code (with none, its off
-	// button alone would disarm). Read only to migrate such a file.
-	KPDCode      string `json:"kpd_code,omitempty"`
-	KPDCodeLabel string `json:"kpd_code_label,omitempty"`
 
 	// Radio is where the sensor sits on the radio network: set at
 	// pairing, imported from fbxhome.xml at the first start.
@@ -341,7 +335,7 @@ func (s *Store) Load() error {
 		return fmt.Errorf("parse config: %w", err)
 	}
 	migrateNightAlarm(&s.cfg, data)
-	migrateKPDCode(&s.cfg)
+	migrateKPDCode(&s.cfg, data)
 
 	// Migration legacy : si on a un password en clair (ancien schéma)
 	// et pas de hash, on hash maintenant. Le Save() est différé jusqu'à
@@ -388,16 +382,28 @@ func migrateNightAlarm(cfg *Config, data []byte) {
 }
 
 // migrateKPDCode turns kpd_code, a keypad's single code before
-// kpd_codes, into its code list. kpd_codes wins when both are there:
-// kpd_code then only mirrors its first code. In memory, kpd_code stays
-// empty; save writes it back from the list.
-func migrateKPDCode(cfg *Config) {
-	for i := range cfg.Sensors {
-		se := &cfg.Sensors[i]
-		if len(se.KPDCodes) == 0 && se.KPDCode != "" {
-			se.KPDCodes = []KPDCode{{Password: se.KPDCode, Label: se.KPDCodeLabel}}
+// kpd_codes, into its code list; kpd_codes wins when both are there.
+// kpd_code is dropped at the next save.
+func migrateKPDCode(cfg *Config, data []byte) {
+	var legacy struct {
+		Sensors []struct {
+			ID    int    `json:"id"`
+			Code  string `json:"kpd_code"`
+			Label string `json:"kpd_code_label"`
+		} `json:"sensors"`
+	}
+	if json.Unmarshal(data, &legacy) != nil {
+		return
+	}
+	for _, l := range legacy.Sensors {
+		if l.Code == "" {
+			continue
 		}
-		se.KPDCode, se.KPDCodeLabel = "", ""
+		for i := range cfg.Sensors {
+			if se := &cfg.Sensors[i]; se.ID == l.ID && len(se.KPDCodes) == 0 {
+				se.KPDCodes = []KPDCode{{Password: l.Code, Label: l.Label}}
+			}
+		}
 	}
 }
 
@@ -417,7 +423,7 @@ func (s *Store) Save() error {
 // leaves the previous config, never a truncated one. In charmux mode it
 // is the registry of the paired sensors.
 func (s *Store) save() error {
-	data, err := json.MarshalIndent(s.cfg.fileForm(), "", "  ")
+	data, err := json.MarshalIndent(s.cfg, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
 	}
@@ -468,18 +474,5 @@ func (c Config) clone() Config {
 		c.Sensors[i].KPDCodes = slices.Clone(c.Sensors[i].KPDCodes)
 	}
 	c.DeletedIDs = slices.Clone(c.DeletedIDs)
-	return c
-}
-
-// fileForm is the config as written to the file: each keypad's first
-// code is also where an openqiarad from before kpd_codes reads it.
-func (c Config) fileForm() Config {
-	c = c.clone()
-	for i := range c.Sensors {
-		se := &c.Sensors[i]
-		if len(se.KPDCodes) > 0 {
-			se.KPDCode, se.KPDCodeLabel = se.KPDCodes[0].Password, se.KPDCodes[0].Label
-		}
-	}
 	return c
 }

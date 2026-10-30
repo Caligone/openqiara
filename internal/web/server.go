@@ -242,13 +242,9 @@ func (s *Server) routes() (*http.ServeMux, error) {
 
 	// Ressources — codes du clavier. Mono-KPD assumé : s'il y a
 	// plusieurs claviers appairés, on répond 409 plutôt que d'en choisir
-	// un au hasard (cf. requireSingleKPD). /kpd/code est l'ancienne API à
-	// un code, elle agit sur le premier.
+	// un au hasard (cf. requireSingleKPD).
 	mux.HandleFunc("GET /api/v1/kpd/codes", s.cors(s.handleGetKPDCodes))
 	mux.HandleFunc("PUT /api/v1/kpd/codes", s.cors(s.handlePutKPDCodes))
-	mux.HandleFunc("GET /api/v1/kpd/code", s.cors(s.handleGetKPDCode))
-	mux.HandleFunc("PUT /api/v1/kpd/code", s.cors(s.handleSetKPDCode))
-	mux.HandleFunc("DELETE /api/v1/kpd/code", s.cors(s.handleDeleteKPDCode))
 
 	// Ressources — configuration. Chaque sous-ressource a son GET
 	// symétrique ; /api/v1/config reste l'agrégat de lecture.
@@ -729,7 +725,7 @@ func (s *Server) handleNotFoundV1(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGoneUnversioned(w http.ResponseWriter, r *http.Request) {
 	// Pas de chemin de remplacement calculé : il serait faux pour les routes
 	// déplacées (/api/alarm → /api/v1/commands/alarm, /api/codes →
-	// /api/v1/kpd/code). La table de correspondance est dans docs/api.md.
+	// /api/v1/kpd/codes). La table de correspondance est dans docs/api.md.
 	writeJSON(w, http.StatusGone, map[string]any{
 		"error":   "API non versionnée supprimée, voir /api/v1",
 		"path":    r.URL.Path,
@@ -1278,37 +1274,6 @@ func validateKPDCodes(codes []config.KPDCode) ([]config.KPDCode, error) {
 	return out, nil
 }
 
-// updateKPDCodes applique edit à la liste de codes du clavier, la valide,
-// l'enregistre, et la fait partir au prochain réveil du clavier.
-func (s *Server) updateKPDCodes(w http.ResponseWriter, edit func([]config.KPDCode) []config.KPDCode) {
-	kpd, err := s.requireSingleKPD()
-	if err != nil {
-		writeKPDErr(w, err)
-		return
-	}
-	codes, err := validateKPDCodes(edit(kpd.KPDCodes))
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if err := s.store.Update(func(cfg *config.Config) {
-		if i := slices.IndexFunc(cfg.Sensors, func(se config.SensorEntry) bool { return se.ID == kpd.ID }); i >= 0 {
-			cfg.Sensors[i].KPDCodes = codes
-		}
-	}); err != nil {
-		writeErr(w, http.StatusInternalServerError, "échec sauvegarde: "+err.Error())
-		return
-	}
-
-	// Radio backend: the codes go out at the keypad's next wake.
-	if rc, ok := s.cam.(*camera.RadioClient); ok {
-		rc.Reload()
-	}
-
-	s.log.Info("KPD codes updated", "count", len(codes))
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-}
-
 // handleGetKPDCodes lit les codes du clavier, en clair : l'UI les affiche
 // pour que l'utilisateur les retrouve. 404 si aucun clavier n'est appairé,
 // liste vide pour un clavier sans code.
@@ -1335,55 +1300,32 @@ func (s *Server) handlePutKPDCodes(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "JSON invalide")
 		return
 	}
-	s.updateKPDCodes(w, func([]config.KPDCode) []config.KPDCode { return body.Codes })
-}
-
-// handleGetKPDCode, handleSetKPDCode et handleDeleteKPDCode sont l'API
-// d'avant /kpd/codes, quand le clavier n'avait qu'un code. Gardées pour les
-// clients existants, elles agissent sur le premier code de la liste.
-func (s *Server) handleGetKPDCode(w http.ResponseWriter, r *http.Request) {
+	codes, err := validateKPDCodes(body.Codes)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	kpd, err := s.requireSingleKPD()
 	if err != nil {
 		writeKPDErr(w, err)
 		return
 	}
-	if len(kpd.KPDCodes) == 0 {
-		writeJSON(w, http.StatusOK, map[string]any{"sensor_id": kpd.ID, "code": nil})
+	if err := s.store.Update(func(cfg *config.Config) {
+		if i := slices.IndexFunc(cfg.Sensors, func(se config.SensorEntry) bool { return se.ID == kpd.ID }); i >= 0 {
+			cfg.Sensors[i].KPDCodes = codes
+		}
+	}); err != nil {
+		writeErr(w, http.StatusInternalServerError, "échec sauvegarde: "+err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"sensor_id": kpd.ID,
-		"code": map[string]any{
-			"password": kpd.KPDCodes[0].Password,
-			"label":    kpd.KPDCodes[0].Label,
-		},
-	})
-}
 
-func (s *Server) handleSetKPDCode(w http.ResponseWriter, r *http.Request) {
-	var body config.KPDCode
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeErr(w, http.StatusBadRequest, "JSON invalide")
-		return
+	// Radio backend: the codes go out at the keypad's next wake.
+	if rc, ok := s.cam.(*camera.RadioClient); ok {
+		rc.Reload()
 	}
-	if body.Label == "" {
-		body.Label = "Code"
-	}
-	s.updateKPDCodes(w, func(codes []config.KPDCode) []config.KPDCode {
-		if len(codes) == 0 {
-			return []config.KPDCode{body}
-		}
-		return append([]config.KPDCode{body}, codes[1:]...)
-	})
-}
 
-func (s *Server) handleDeleteKPDCode(w http.ResponseWriter, r *http.Request) {
-	s.updateKPDCodes(w, func(codes []config.KPDCode) []config.KPDCode {
-		if len(codes) == 0 {
-			return nil
-		}
-		return codes[1:]
-	})
+	s.log.Info("KPD codes updated", "count", len(codes))
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func (s *Server) handleShutter(w http.ResponseWriter, r *http.Request) {
