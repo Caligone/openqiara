@@ -426,15 +426,16 @@ function sensorIcon(type) {
 }
 
 function sensorStateLabel(sensor) {
-  if (sensor.type === 'DWS') return sensor.open ? 'Ouvert' : 'Fermé';
-  if (sensor.type === 'PIR') return sensor.motion ? 'Mouvement' : 'OK';
+  // open/motion absents : état inconnu tant que le capteur n'a rien rapporté
+  if (sensor.type === 'DWS') return sensor.open === undefined ? 'Inconnu' : sensor.open ? 'Ouvert' : 'Fermé';
+  if (sensor.type === 'PIR') return sensor.motion === undefined ? 'Inconnu' : sensor.motion ? 'Mouvement' : 'OK';
   if (sensor.type === 'SRN') return sensor.reachable ? 'Prête' : 'Hors ligne';
   return sensor.reachable ? 'En ligne' : 'Hors ligne';
 }
 
 function sensorStateClass(sensor) {
-  if (sensor.type === 'DWS') return sensor.open ? 'open' : 'closed';
-  if (sensor.type === 'PIR') return sensor.motion ? 'open' : 'closed';
+  if (sensor.type === 'DWS') return sensor.open === undefined ? '' : sensor.open ? 'open' : 'closed';
+  if (sensor.type === 'PIR') return sensor.motion === undefined ? '' : sensor.motion ? 'open' : 'closed';
   return sensor.reachable ? 'closed' : 'open';
 }
 

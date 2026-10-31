@@ -16,20 +16,23 @@ func TestSensorInAlarmByType(t *testing.T) {
 		sensor camera.Sensor
 		want   bool
 	}{
-		{"DWS open", camera.Sensor{Type: "DWS", Open: true}, true},
-		{"DWS closed", camera.Sensor{Type: "DWS", Open: false}, false},
-		{"PIR motion", camera.Sensor{Type: "PIR", Motion: true}, true},
-		{"PIR idle", camera.Sensor{Type: "PIR", Motion: false}, false},
+		{"DWS open", camera.Sensor{Type: "DWS", Open: new(true)}, true},
+		{"DWS closed", camera.Sensor{Type: "DWS", Open: new(false)}, false},
+		{"PIR motion", camera.Sensor{Type: "PIR", Motion: new(true)}, true},
+		{"PIR idle", camera.Sensor{Type: "PIR", Motion: new(false)}, false},
+		// Unknown until the sensor reports after a start: not in alarm.
+		{"DWS unknown", camera.Sensor{Type: "DWS"}, false},
+		{"PIR unknown", camera.Sensor{Type: "PIR"}, false},
 
 		// A siren never triggers the alarm, whatever its other fields say.
-		{"SRN never triggers", camera.Sensor{Type: "SRN", Open: true, Motion: true}, false},
+		{"SRN never triggers", camera.Sensor{Type: "SRN", Open: new(true), Motion: new(true)}, false},
 
 		// A keypad arms/disarms through its own event path, never through
 		// sensorInAlarm.
-		{"KPD never triggers", camera.Sensor{Type: "KPD", Open: true, Motion: true}, false},
+		{"KPD never triggers", camera.Sensor{Type: "KPD", Open: new(true), Motion: new(true)}, false},
 
-		{"unknown type", camera.Sensor{Type: "UNKNOWN", Open: true, Motion: true}, false},
-		{"empty type", camera.Sensor{Open: true, Motion: true}, false},
+		{"unknown type", camera.Sensor{Type: "UNKNOWN", Open: new(true), Motion: new(true)}, false},
+		{"empty type", camera.Sensor{Open: new(true), Motion: new(true)}, false},
 	}
 
 	for _, tt := range tests {

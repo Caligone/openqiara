@@ -16,7 +16,7 @@ import (
 func TestRepublishSensorStatesKeepsUnreportedState(t *testing.T) {
 	sensors := []camera.Sensor{
 		{ID: 46, Type: "DWS"}, // open before the restart, silent since
-		{ID: 52, Type: "DWS", Open: true, Reported: true},
+		{ID: 52, Type: "DWS", Open: new(true)},
 		{ID: 60, Type: "PIR"},
 		{ID: 29, Type: "SRN", SirenState: "armed"},
 		{ID: 31, Type: "KPD"},
