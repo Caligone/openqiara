@@ -14,10 +14,10 @@
 // (rollback manuel possible), puis on remplace /data/openqiarad.
 //
 // Hors-scope :
-//   - Pas de rollback automatique au boot (le watchdog boot.sh
-//     redémarre le binaire mais ne sait pas détecter un crash en boucle).
-//     Si le nouveau binaire panic au boot, rollback SSH manuel via
-//     /media/openqiarad.old.
+//   - Le retour arrière automatique (auto.go) écarte le binaire qui plante
+//     ou fait rebooter la cam (santé du watchdog MCU) pendant ses 40 min
+//     d'essai. Un défaut qui ne fait pas rebooter (MQTT, HomeKit) reste en
+//     place : rollback SSH manuel via /media/openqiarad.old.
 //   - Pas de signature cryptographique au-delà du SHA256 servi par
 //     GitHub en HTTPS (suffisant pour alpha).
 package ota
@@ -56,5 +56,9 @@ type CheckResult struct {
 	Current      string  `json:"current"`       // version qui tourne actuellement
 	Latest       Release `json:"latest"`        // dernière release publiée
 	UpdateNeeded bool    `json:"update_needed"` // current != latest.TagName et current != "dev"
-	CheckedAt    string  `json:"checked_at"`    // ISO 8601 de quand on a checké
+	// Newer : la dernière release est plus récente que la courante (cf.
+	// listedAfterLatest). Seul critère de l'auto-update, qui ne rétrograde
+	// jamais ; UpdateNeeded garde la comparaison textuelle pour l'UI.
+	Newer     bool   `json:"-"`
+	CheckedAt string `json:"checked_at"` // ISO 8601 de quand on a checké
 }

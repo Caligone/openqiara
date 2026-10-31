@@ -1075,6 +1075,89 @@
         }
       }
     },
+    "/api/v1/config/update": {
+      "get": {
+        "tags": [
+          "Configuration"
+        ],
+        "summary": "Lire la configuration des mises à jour",
+        "operationId": "getUpdateConfig",
+        "responses": {
+          "200": {
+            "description": "Réglages courants.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateConfig"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Configuration"
+        ],
+        "summary": "Activer ou couper l'installation automatique",
+        "operationId": "updateUpdateConfig",
+        "description": "Pris en compte au prochain check (toutes les 6 h, le premier 10 min après le démarrage), sans redémarrage.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateConfig"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Enregistré, réglages relus.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateConfig"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "JSON malformé ou `auto` absent.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "description": "Échec de la sauvegarde.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/config/admin": {
       "get": {
         "tags": [
@@ -1630,7 +1713,7 @@
             "$ref": "#/components/responses/NotFound"
           },
           "409": {
-            "description": "Une installation est déjà en cours.",
+            "description": "Une installation est déjà en cours, attend son reboot, ou le binaire courant est encore en essai.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2497,6 +2580,19 @@
           }
         }
       },
+      "UpdateConfig": {
+        "type": "object",
+        "description": "Mises à jour. `auto` installe la dernière release seule, uniquement alarme désarmée ; jamais vers une version antérieure. Si le nouveau binaire ne tient pas son essai de 40 min en 4 démarrages, boot.sh remet l'ancien et la release n'est plus reproposée.",
+        "required": [
+          "auto"
+        ],
+        "properties": {
+          "auto": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
       "AlarmConfig": {
         "type": "object",
         "description": "Comportement de l'alarme.\n\nEn mode `standalone`, le moteur local décide. En mode `alarmo`, Home Assistant Alarmo est la source de vérité et le moteur local est désactivé.\n\nEn lecture, les sept champs sont toujours présents : les valeurs par défaut sont appliquées à la volée.",
@@ -2614,7 +2710,8 @@
           "homekit",
           "admin",
           "web",
-          "alarm"
+          "alarm",
+          "update"
         ],
         "properties": {
           "mqtt": {
@@ -2631,6 +2728,9 @@
           },
           "alarm": {
             "$ref": "#/components/schemas/AlarmConfig"
+          },
+          "update": {
+            "$ref": "#/components/schemas/UpdateConfig"
           }
         }
       },

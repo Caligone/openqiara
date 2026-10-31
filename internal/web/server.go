@@ -260,6 +260,8 @@ func (s *Server) routes() (*http.ServeMux, error) {
 	mux.HandleFunc("PUT /api/v1/config/alarm", s.cors(s.handleUpdateAlarm))
 	mux.HandleFunc("GET /api/v1/config/web", s.cors(s.handleGetWeb))
 	mux.HandleFunc("PUT /api/v1/config/web", s.cors(s.handleUpdateWeb))
+	mux.HandleFunc("GET /api/v1/config/update", s.cors(s.handleGetUpdateConfig))
+	mux.HandleFunc("PUT /api/v1/config/update", s.cors(s.handlePutUpdateConfig))
 
 	// Ressources — état courant (lecture seule)
 	mux.HandleFunc("GET /api/v1/status", s.cors(s.handleStatus))
@@ -702,6 +704,7 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 		"admin":   map[string]any{"password_set": cfg.Admin.AuthEnabled()},
 		"web":     map[string]any{"enabled": cfg.WebEnabled()},
 		"alarm":   s.alarmConfigPayload(),
+		"update":  cfg.Update,
 	})
 }
 

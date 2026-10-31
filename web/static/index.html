@@ -309,6 +309,19 @@ a { color: var(--primary); }
             <option value="false">Désactivée (headless)</option>
           </select>
         </div>
+
+        <!-- Mises à jour -->
+        <div style="font-weight:600;font-size:14px;margin:16px 0 8px">Mises à jour</div>
+        <div class="form-group">
+          <label>Installation automatique</label>
+          <select id="cfg-update-auto">
+            <option value="false">Désactivée</option>
+            <option value="true">Activée</option>
+          </select>
+        </div>
+        <div style="color:var(--text-muted);font-size:12px;margin-top:-4px;margin-bottom:12px">
+          Installe la dernière version seule, uniquement alarme désarmée. Si elle ne démarre pas, l'ancienne revient.
+        </div>
       </div>
 
       <!-- Un seul bouton Enregistrer -->
@@ -803,6 +816,9 @@ async function loadConfig() {
     if (d.web) {
       document.getElementById('cfg-web-enabled').value = d.web.enabled ? 'true' : 'false';
     }
+    if (d.update) {
+      document.getElementById('cfg-update-auto').value = d.update.auto ? 'true' : 'false';
+    }
   } catch (e) { /* ignore */ }
 }
 
@@ -894,6 +910,11 @@ document.getElementById('cfg-save-all').addEventListener('click', async () => {
   calls.push(fetch(V1 + '/config/web', {
     method: 'PUT', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({enabled: webEnabled})
+  }));
+
+  calls.push(fetch(V1 + '/config/update', {
+    method: 'PUT', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({auto: document.getElementById('cfg-update-auto').value === 'true'})
   }));
 
   try {

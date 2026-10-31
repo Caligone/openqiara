@@ -67,6 +67,11 @@ func (in *Installer) purgeStaleBinaries() {
 // démarrage suivant (le swap se fait là, FD libre + espace dispo).
 const PendingMarkerPath = "/data/ota_pending"
 
+// PendingTagPath contient le tag de la release stagée, à côté de
+// PendingMarkerPath qui reste sur une ligne : le boot.sh d'une release
+// antérieure (downgrade) le lit avec un simple cat.
+const PendingTagPath = "/data/ota_pending_tag"
+
 // InstallStep décrit où en est l'install pour l'UI.
 type InstallStep string
 
@@ -106,8 +111,8 @@ type InstallConfig struct {
 	StageDir string
 	// TargetPath = chemin du binaire courant (sur /data).
 	TargetPath string
-	// BackupPath = où on garde l'ancien binaire avant swap pour rollback
-	// manuel SSH si le nouveau crash au boot.
+	// BackupPath = où on garde l'ancien binaire avant swap : boot.sh le
+	// remet si le nouveau ne passe pas son essai (auto.go).
 	BackupPath string
 
 	// BootTargetPath = chemin du script de boot (sur /data) à mettre à
@@ -120,6 +125,13 @@ type InstallConfig struct {
 	// qu'il est correct avant le swap. Retour non-nil = abort install.
 	// Override en test pour shunter `sh -n` (qui peut manquer en CI).
 	BootValidator func(path string) error
+
+	// PendingPath et TrialPath : une install stagée qui attend son reboot,
+	// ou un binaire en essai, bloquent toute nouvelle install (Start
+	// renvoie ErrBusy). Sinon BackupPath et le boot.sh.old, le secours du
+	// retour arrière, seraient écrasés. Vides = pas de contrôle (tests).
+	PendingPath string
+	TrialPath   string
 }
 
 // DefaultInstallConfig pour la cam Qiara.
@@ -131,6 +143,8 @@ func DefaultInstallConfig() InstallConfig {
 		BootTargetPath: "/data/boot.sh",
 		BootBackupPath: "/data/boot.sh.old",
 		BootValidator:  validateBootScript,
+		PendingPath:    PendingMarkerPath,
+		TrialPath:      TrialMarkerPath,
 	}
 }
 
@@ -185,6 +199,15 @@ func (in *Installer) Start(ctx context.Context, tagName string) error {
 		in.mu.Unlock()
 		return ErrAlreadyRunning
 	}
+	for _, p := range []string{in.cfg.PendingPath, in.cfg.TrialPath} {
+		if p == "" {
+			continue
+		}
+		if _, err := os.Stat(p); err == nil {
+			in.mu.Unlock()
+			return ErrBusy
+		}
+	}
 	in.running = true
 	in.status = InstallStatus{
 		Step:      StepDownload,
@@ -202,6 +225,10 @@ func (in *Installer) Start(ctx context.Context, tagName string) error {
 
 // ErrAlreadyRunning est retournée par Start quand une install tourne.
 var ErrAlreadyRunning = errors.New("install already running")
+
+// ErrBusy est retournée par Start quand une install attend son reboot ou
+// que le binaire courant est encore en essai.
+var ErrBusy = errors.New("an update is waiting for its reboot or on trial")
 
 func (in *Installer) setStep(step InstallStep, mut func(*InstallStatus)) {
 	in.mu.Lock()
@@ -270,12 +297,14 @@ func (in *Installer) run(ctx context.Context, tagName string) {
 	}
 
 	// 4. Backup ancien binaire vers /media (gros, donc hors /data).
+	//    Fatal : c'est le binaire que boot.sh remet si le nouveau ne passe
+	//    pas son essai.
 	in.setStep(StepBackup, nil)
 	if err := copyFile(in.cfg.TargetPath, in.cfg.BackupPath); err != nil {
-		// Pas fatal — on continue, juste pas de filet rollback binaire.
-		in.setStep(StepBackup, func(s *InstallStatus) {
-			s.Error = "binary backup failed (continuing): " + err.Error()
-		})
+		_ = os.Remove(binStagePath)
+		_ = os.Remove(bootStagePath)
+		in.fail(fmt.Errorf("binary backup: %w", err))
+		return
 	}
 
 	// 5. Swap boot.sh atomique (cp+rename). Si ça échoue après, on n'a
@@ -297,9 +326,11 @@ func (in *Installer) run(ctx context.Context, tagName string) {
 	in.setStep(StepSwap, func(s *InstallStatus) {
 		s.StagedAt = binStagePath
 	})
+	// running reste vrai : une install réussie est terminale jusqu'au
+	// reboot. Un Start pendant la pause ou avant qu'onComplete écrive
+	// ota_pending effacerait StagedAt.
 	in.mu.Lock()
 	in.status.Step = StepDone
-	in.running = false
 	in.mu.Unlock()
 
 	// Pause pour laisser l'UI poller le status une dernière fois.
