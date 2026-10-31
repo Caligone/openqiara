@@ -157,18 +157,18 @@ func TestRadioEvents(t *testing.T) {
 		t.Error("door state read before the door reported it")
 	}
 	mcu.rx(state(5, 10, 0)) // door opened
-	if ev := nextEvent(t, c); ev.SensorID != 23 || !ev.Sensor.Open || ev.Sensor.Type != "DWS" {
+	if ev := nextEvent(t, c); ev.SensorID != 23 || (ev.Sensor.Open == nil || !*ev.Sensor.Open) || ev.Sensor.Type != "DWS" {
 		t.Errorf("event = %+v, want door 23 open", ev)
 	}
 	if ack := mcu.sent(t); ack.GWDst != 5 || ack.AckCnt != 10 || ack.Flags != 0x0084 {
 		t.Errorf("ack = %+v, want fbxhome's DWS ack", ack)
 	}
-	if s, err := c.ReadSensor(context.Background(), 23); err != nil || !s.Open {
+	if s, err := c.ReadSensor(context.Background(), 23); err != nil || s.Open == nil || !*s.Open {
 		t.Errorf("read %+v %v, want open", s, err)
 	}
 	// Opened again (its close was lost): it must go out again.
 	mcu.rx(state(5, 11, 0))
-	if ev := nextEvent(t, c); ev.SensorID != 23 || !ev.Sensor.Open {
+	if ev := nextEvent(t, c); ev.SensorID != 23 || ev.Sensor.Open == nil || !*ev.Sensor.Open {
 		t.Errorf("event = %+v, want door 23 open again", ev)
 	}
 	mcu.sent(t)
@@ -540,7 +540,7 @@ func TestRadioPairingLimit(t *testing.T) {
 func TestRadioBackPublishesFreshState(t *testing.T) {
 	c, mcu, _ := newRadio(t, dws)
 	mcu.rx(state(5, 10, 0)) // opened
-	if ev := nextEvent(t, c); !ev.Sensor.Open {
+	if ev := nextEvent(t, c); ev.Sensor.Open == nil || !*ev.Sensor.Open {
 		t.Fatalf("event = %+v, want open", ev)
 	}
 	mcu.sent(t) // ack
@@ -550,7 +550,7 @@ func TestRadioBackPublishesFreshState(t *testing.T) {
 	}
 	mcu.rx(state(5, 11, 1)) // closed
 	for range 2 {
-		if ev := nextEvent(t, c); ev.Sensor.Open {
+		if ev := nextEvent(t, c); ev.Sensor.Open != nil && *ev.Sensor.Open {
 			t.Fatalf("event = %+v: stale open published", ev)
 		}
 	}
@@ -566,7 +566,7 @@ func TestRadioDoorStateOnlyOnceReported(t *testing.T) {
 		t.Fatalf("heartbeat event = %+v, want door 23 with no state", ev)
 	}
 	mcu.rx(state(5, 11, 1)) // closed
-	if ev := nextEvent(t, c); !ev.Sensor.StateKnown() || ev.Sensor.Open {
+	if ev := nextEvent(t, c); ev.Sensor.Open == nil || *ev.Sensor.Open {
 		t.Fatalf("report event = %+v, want door 23 closed", ev)
 	}
 	c.Reload()

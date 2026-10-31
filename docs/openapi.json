@@ -140,8 +140,6 @@
                         "item_id": "f5129f624dc648fa",
                         "battery": 100,
                         "reachable": true,
-                        "open": false,
-                        "motion": false,
                         "kpd_state": "disarmed",
                         "last_seen": 1758441600,
                         "label": "Entrée",
@@ -156,7 +154,6 @@
                         "battery": 98,
                         "reachable": true,
                         "open": true,
-                        "motion": false,
                         "last_seen": 1758441500,
                         "label": "Porte d'entrée",
                         "night_allowed": false,
@@ -421,7 +418,6 @@
                         "battery": 100,
                         "reachable": true,
                         "open": false,
-                        "motion": false,
                         "last_seen": 0
                       }
                     }
@@ -2206,7 +2202,7 @@
       },
       "Sensor": {
         "type": "object",
-        "description": "Capteur tel que le MCU le connaît. `open` ne vaut que pour un DWS et `motion` que pour un PIR : le firmware expose un booléen générique, décodé selon le type.",
+        "description": "Capteur tel que le MCU le connaît. `open` ne vaut que pour un DWS et `motion` que pour un PIR : absents sur les autres types, et absents aussi tant que le capteur n'a pas rapporté son état depuis le démarrage (état inconnu, pas fermé).",
         "required": [
           "id",
           "type",
@@ -2214,8 +2210,6 @@
           "item_id",
           "battery",
           "reachable",
-          "open",
-          "motion",
           "last_seen"
         ],
         "properties": {
@@ -2265,11 +2259,11 @@
           },
           "open": {
             "type": "boolean",
-            "description": "DWS : ouvrant ouvert. Toujours `false` sur les autres types."
+            "description": "DWS : ouvrant ouvert. Absent tant que l'état est inconnu, et sur les autres types."
           },
           "motion": {
             "type": "boolean",
-            "description": "PIR : mouvement en cours. Toujours `false` sur les autres types."
+            "description": "PIR : mouvement en cours. Absent tant que l'état est inconnu, et sur les autres types."
           },
           "kpd_state": {
             "type": "string",

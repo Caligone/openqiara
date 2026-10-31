@@ -725,6 +725,15 @@ func republishSensorStates(ctx context.Context, sensors []camera.Sensor, publish
 	}
 }
 
+// stateAttr is a door or motion state as logged: a text handler would print
+// a *bool as its address.
+func stateAttr(v *bool) any {
+	if v == nil {
+		return "unknown"
+	}
+	return *v
+}
+
 // logSensorEvent only logs state fields that are meaningful for the sensor
 // type: a PIR has no open/closed state.
 func logSensorEvent(logger *slog.Logger, evt camera.SensorEvent, source string) {
@@ -734,9 +743,9 @@ func logSensorEvent(logger *slog.Logger, evt camera.SensorEvent, source string) 
 	}
 	switch evt.Sensor.Type {
 	case "DWS":
-		attrs = append(attrs, "open", evt.Sensor.Open)
+		attrs = append(attrs, "open", stateAttr(evt.Sensor.Open))
 	case "PIR":
-		attrs = append(attrs, "motion", evt.Sensor.Motion)
+		attrs = append(attrs, "motion", stateAttr(evt.Sensor.Motion))
 	}
 	attrs = append(attrs, "battery", evt.Sensor.Battery)
 	if source != "" {
@@ -850,9 +859,9 @@ func (a *alarmAdapter) SetTimings(arming, pending time.Duration) {
 func sensorInAlarm(s camera.Sensor) bool {
 	switch s.Type {
 	case "DWS":
-		return s.Open
+		return s.Open != nil && *s.Open
 	case "PIR":
-		return s.Motion
+		return s.Motion != nil && *s.Motion
 	case "SRN":
 		// A siren is an actuator: it never triggers the alarm by itself.
 		// DomusRF sensors expose no usable tamper state (see issue #30).

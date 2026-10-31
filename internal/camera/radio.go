@@ -456,9 +456,11 @@ func (c *RadioClient) publish(ev radio.Event) {
 	report := false
 	switch ev.Kind {
 	case radio.Opened, radio.Closed:
-		s.Open, report = ev.Kind == radio.Opened, true
+		open := ev.Kind == radio.Opened
+		s.Open, report = &open, true
 	case radio.MotionStart, radio.MotionEnd:
-		s.Motion, report = ev.Kind == radio.MotionStart, true
+		motion := ev.Kind == radio.MotionStart
+		s.Motion, report = &motion, true
 	case radio.ArmedAway, radio.ArmedNight, radio.Disarmed:
 		if ev.Code != "" {
 			c.log.Info("radio: keypad disarmed with a code", "id", id, "code", c.codeLabel(id, ev.Code))
@@ -498,9 +500,6 @@ func (c *RadioClient) publish(ev radio.Event) {
 		c.log.Info("radio: sensor rebooted, provisioning it", "id", id)
 	case radio.Unhandled:
 		c.log.Warn("radio: frame not understood", "id", id, "value", ev.Value)
-	}
-	if report {
-		s.Reported = true
 	}
 	c.sensors[id] = s
 	if report || s != before {
