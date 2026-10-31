@@ -27,6 +27,7 @@ type Config struct {
 	Admin      AdminConfig   `json:"admin"`
 	Web        WebConfig     `json:"web"`
 	Alarm      AlarmConfig   `json:"alarm"`
+	Update     UpdateConfig  `json:"update"`
 	Sensors    []SensorEntry `json:"sensors,omitempty"`
 	DeletedIDs []int         `json:"deleted_ids,omitempty"`
 
@@ -48,6 +49,13 @@ type WebConfig struct {
 	// Zero value (false) means enabled for backward compatibility with existing
 	// configs that don't have this field — handled in the load logic below.
 	Enabled *bool `json:"enabled,omitempty"`
+}
+
+// UpdateConfig holds the OTA settings.
+type UpdateConfig struct {
+	// Auto installs the latest release on its own, only while the alarm is
+	// disarmed. Off by default.
+	Auto bool `json:"auto"`
 }
 
 // AlarmConfig selects the alarm operating mode and related settings.

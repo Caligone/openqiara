@@ -165,6 +165,7 @@ Le modèle assume **un seul clavier** :
 | `/api/v1/config/admin` | `{password_set}` — **jamais** le mot de passe ni son hash | `{password}` (8 caractères min., vide refusé) — `DELETE` désactive l'auth |
 | `/api/v1/config/alarm` | idem | `{mode?, alarmo_command_topic?, alarmo_state_topic?, siren_sounds?, arming_delay_seconds?, pending_delay_seconds?, wail_duration_seconds?}` |
 | `/api/v1/config/web` | `{enabled}` | `{enabled}` |
+| `/api/v1/config/update` | `{auto}` | `{auto}` |
 
 Contraintes validées côté serveur (`400` sinon) :
 
@@ -201,6 +202,27 @@ Notes :
 
 `503` si l'OTA n'est pas configuré (build local sans `-ldflags`), `502` si
 GitHub est injoignable.
+
+Installation automatique (`PUT /config/update {"auto":true}`, coupée par
+défaut) : check toutes les 6 h, le premier 10 min après le démarrage, et
+install seulement alarme désarmée, d'une release plus récente (jamais de
+retour à une version antérieure). Toute install OTA, manuelle comprise,
+attend que l'alarme soit désarmée pour rebooter (état inconnu compris).
+
+Seules les 30 dernières releases servent à juger « plus récente » : une
+caméra plus en retard que ça n'est plus mise à jour automatiquement.
+
+Le nouveau binaire est en essai 40 min (la santé du watchdog MCU ne voit
+une radio muette qu'après 30 min), puis adopté au premier contrôle de santé
+OK. Au-delà de 4 démarrages avant ça, plantage ou reboot, `boot.sh` remet
+l'ancien binaire et l'ancien `boot.sh`, reboote, et l'auto-update ne
+repropose plus ce tag (`/data/ota_failed`). Une bascule ratée au boot
+(/data plein) fait de même. Deux coupures de courant pendant l'essai
+suffisent à rejeter une bonne release : la réinstaller à la main. Tag perdu
+(`unknown`) : l'auto-update s'arrête jusqu'à ce qu'on supprime
+`/data/ota_failed`. Pendant l'essai, ou tant qu'une install attend son
+reboot, une nouvelle install répond `409` ; `scripts/deploy.sh` met fin à
+l'essai.
 
 ---
 
