@@ -463,7 +463,24 @@ func (e *Engine) saveLocked() {
 		e.logger.Error("alarm: marshal state", "error", err)
 		return
 	}
-	if err := os.WriteFile(e.path, data, 0644); err != nil {
+	// Write to a temporary file in the same directory, flush it, then rename
+	// it over the previous one (same pattern as config.Store.save). With a
+	// plain WriteFile, a power cut during the write leaves a truncated file:
+	// Load then fails to parse it and the alarm restarts disarmed.
+	tmp := e.path + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	if err == nil {
+		_, err = f.Write(data)
+		if err == nil {
+			err = f.Sync()
+		}
+		err = errors.Join(err, f.Close())
+	}
+	if err == nil {
+		err = os.Rename(tmp, e.path)
+	}
+	if err != nil {
+		_ = os.Remove(tmp)
 		e.logger.Error("alarm: write state", "error", err)
 	}
 }
