@@ -451,26 +451,50 @@ func main() {
 	// boot.sh applique le swap au démarrage suivant, FD libre et espace
 	// dispo. Plus robuste qu'un SIGTERM + relance (qui dépendait d'un
 	// shutdown propre et d'un re-bind du port :80).
+	//
+	// Le tag va dans ota_pending_tag : boot.sh le recopie dans ota_trial,
+	// puis dans ota_failed si le nouveau binaire ne passe pas son essai.
+	//
+	// Jamais de reboot tant que l'alarme n'est pas désarmée, install
+	// manuelle comprise. Un état inconnu (Alarmo sans MQTT) attend aussi.
+	rebootWhenDisarmed := func() {
+		ota.AwaitIdle(func() bool { return getAlarmState() != string(alarm.StateDisarmed) }, logger)
+		logger.Info("OTA staged — rebooting to apply")
+		_ = exec.Command("reboot").Run()
+	}
+	otaClient := ota.NewClient(BuildInfo(), logger)
+	var otaInstaller *ota.Installer
+	otaInstaller = ota.NewInstaller(otaClient, ota.DefaultInstallConfig(), func() {
+		st := otaInstaller.Status()
+		if st.StagedAt == "" {
+			logger.Error("OTA onComplete: no staged path — aborting swap")
+			return
+		}
+		if err := os.WriteFile(ota.PendingTagPath, []byte(st.Version+"\n"), 0644); err != nil {
+			logger.Error("OTA: write pending tag failed", "error", err)
+			return
+		}
+		if err := os.WriteFile(ota.PendingMarkerPath, []byte(st.StagedAt+"\n"), 0644); err != nil {
+			logger.Error("OTA: write pending marker failed", "error", err)
+			return
+		}
+		time.Sleep(500 * time.Millisecond) // laisse l'UI poller le status final
+		rebootWhenDisarmed()
+	})
 	if webSrv != nil {
-		otaClient := ota.NewClient(BuildInfo(), logger)
-		cfg := ota.DefaultInstallConfig()
-		var otaInstaller *ota.Installer
-		otaInstaller = ota.NewInstaller(otaClient, cfg, func() {
-			staged := otaInstaller.Status().StagedAt
-			if staged == "" {
-				logger.Error("OTA onComplete: no staged path — aborting swap")
-				return
-			}
-			if err := os.WriteFile(ota.PendingMarkerPath, []byte(staged+"\n"), 0644); err != nil {
-				logger.Error("OTA: write pending marker failed", "error", err)
-				return
-			}
-			logger.Info("OTA staged — rebooting to apply", "staged", staged)
-			time.Sleep(500 * time.Millisecond) // laisse l'UI poller le status final
-			_ = exec.Command("reboot").Run()
-		})
 		webSrv.SetOTA(otaClient, otaInstaller)
 	}
+	// Une install stagée au démarrage : le process précédent est mort en
+	// attendant le désarmement. On reprend l'attente.
+	if _, err := os.Stat(ota.PendingMarkerPath); err == nil {
+		go rebootWhenDisarmed()
+	}
+	go ota.RunAuto(ctx, otaClient, otaInstaller, ota.AutoConfig{
+		Enabled:  func() bool { return store.Get().Update.Auto },
+		Disarmed: func() bool { return getAlarmState() == string(alarm.StateDisarmed) },
+		Every:    6 * time.Hour,
+		First:    10 * time.Minute,
+	}, logger)
 
 	// Alarm engine — standalone state machine for arm/disarm/triggered logic.
 	// Config provider reads night_mode from the config store on each query.
@@ -665,6 +689,8 @@ func main() {
 			return hlcamdRunning()
 		}, logger)
 		go wd.run(ctx)
+		// Un binaire installé par l'OTA est adopté sur la même santé.
+		go ota.ConfirmTrial(ctx, wd.health, logger)
 	}
 
 	forwardEvents(ctx, cam, pubs, webSrv, alarmEngine, store, dispatchAlarmCommand, onSirenState, logger)
@@ -706,6 +732,15 @@ func republishSensorStates(ctx context.Context, sensors []camera.Sensor, publish
 	}
 }
 
+// stateAttr is a door or motion state as logged: a text handler would print
+// a *bool as its address.
+func stateAttr(v *bool) any {
+	if v == nil {
+		return "unknown"
+	}
+	return *v
+}
+
 // logSensorEvent only logs state fields that are meaningful for the sensor
 // type: a PIR has no open/closed state.
 func logSensorEvent(logger *slog.Logger, evt camera.SensorEvent, source string) {
@@ -715,9 +750,9 @@ func logSensorEvent(logger *slog.Logger, evt camera.SensorEvent, source string) 
 	}
 	switch evt.Sensor.Type {
 	case "DWS":
-		attrs = append(attrs, "open", evt.Sensor.Open)
+		attrs = append(attrs, "open", stateAttr(evt.Sensor.Open))
 	case "PIR":
-		attrs = append(attrs, "motion", evt.Sensor.Motion)
+		attrs = append(attrs, "motion", stateAttr(evt.Sensor.Motion))
 	}
 	attrs = append(attrs, "battery", evt.Sensor.Battery)
 	if source != "" {
@@ -831,9 +866,9 @@ func (a *alarmAdapter) SetTimings(arming, pending time.Duration) {
 func sensorInAlarm(s camera.Sensor) bool {
 	switch s.Type {
 	case "DWS":
-		return s.Open
+		return s.Open != nil && *s.Open
 	case "PIR":
-		return s.Motion
+		return s.Motion != nil && *s.Motion
 	case "SRN":
 		// A siren is an actuator: it never triggers the alarm by itself.
 		// DomusRF sensors expose no usable tamper state (see issue #30).

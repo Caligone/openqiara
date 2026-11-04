@@ -18,13 +18,13 @@ func TestLogSensorEventUsesTypeSpecificState(t *testing.T) {
 	}{
 		{
 			name:       "PIR only logs motion",
-			sensor:     camera.Sensor{Type: "PIR", Open: true, Motion: true, Battery: 80},
+			sensor:     camera.Sensor{Type: "PIR", Open: new(true), Motion: new(true), Battery: 80},
 			wantField:  "motion",
 			avoidField: "open",
 		},
 		{
 			name:       "DWS only logs open",
-			sensor:     camera.Sensor{Type: "DWS", Open: true, Motion: true, Battery: 70},
+			sensor:     camera.Sensor{Type: "DWS", Open: new(true), Motion: new(true), Battery: 70},
 			wantField:  "open",
 			avoidField: "motion",
 		},
@@ -47,5 +47,21 @@ func TestLogSensorEventUsesTypeSpecificState(t *testing.T) {
 				t.Errorf("unexpected %q field in %s", tt.avoidField, output.String())
 			}
 		})
+	}
+}
+
+// TestLogSensorEventUnknownState: an unknown state logs as such, not as a
+// pointer address or as closed.
+func TestLogSensorEventUnknownState(t *testing.T) {
+	var output bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&output, nil))
+	logSensorEvent(logger, camera.SensorEvent{SensorID: 14, Sensor: camera.Sensor{Type: "DWS"}}, "test")
+	if !bytes.Contains(output.Bytes(), []byte("open=unknown")) {
+		t.Errorf("log = %s, want open=unknown", output.String())
+	}
+	output.Reset()
+	logSensorEvent(logger, camera.SensorEvent{SensorID: 14, Sensor: camera.Sensor{Type: "DWS", Open: new(true)}}, "test")
+	if !bytes.Contains(output.Bytes(), []byte("open=true")) {
+		t.Errorf("log = %s, want open=true", output.String())
 	}
 }

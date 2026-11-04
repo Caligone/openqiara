@@ -74,7 +74,7 @@ func TestMultiPublisherDispatch(t *testing.T) {
 	ctx := context.Background()
 
 	// Dispatch sensor state to all publishers
-	sensor := camera.Sensor{ID: 86, Type: "DWS", Open: true}
+	sensor := camera.Sensor{ID: 86, Type: "DWS", Open: new(true)}
 	for _, p := range pubs {
 		_ = p.PublishSensorState(ctx, sensor)
 	}

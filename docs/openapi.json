@@ -140,8 +140,6 @@
                         "item_id": "f5129f624dc648fa",
                         "battery": 100,
                         "reachable": true,
-                        "open": false,
-                        "motion": false,
                         "kpd_state": "disarmed",
                         "last_seen": 1758441600,
                         "label": "Entrée",
@@ -156,7 +154,6 @@
                         "battery": 98,
                         "reachable": true,
                         "open": true,
-                        "motion": false,
                         "last_seen": 1758441500,
                         "label": "Porte d'entrée",
                         "night_allowed": false,
@@ -421,7 +418,6 @@
                         "battery": 100,
                         "reachable": true,
                         "open": false,
-                        "motion": false,
                         "last_seen": 0
                       }
                     }
@@ -504,37 +500,43 @@
         }
       }
     },
-    "/api/v1/kpd/code": {
+    "/api/v1/kpd/codes": {
       "get": {
         "tags": [
           "Clavier"
         ],
-        "summary": "Lire le code du clavier",
-        "operationId": "getKPDCode",
+        "summary": "Lire les codes du clavier",
+        "operationId": "getKPDCodes",
         "responses": {
           "200": {
-            "description": "Code configuré, ou `null`.",
+            "description": "Codes configurés, liste vide si le clavier n'en a pas.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/KPDCode"
+                  "$ref": "#/components/schemas/KPDCodes"
                 },
                 "examples": {
                   "configured": {
-                    "summary": "Code défini",
+                    "summary": "Deux codes",
                     "value": {
                       "sensor_id": 14,
-                      "code": {
-                        "password": "4821",
-                        "label": "admin"
-                      }
+                      "codes": [
+                        {
+                          "password": "4821",
+                          "label": "Moi"
+                        },
+                        {
+                          "password": "1357",
+                          "label": "Invité"
+                        }
+                      ]
                     }
                   },
                   "empty": {
                     "summary": "Clavier sans code",
                     "value": {
                       "sensor_id": 14,
-                      "code": null
+                      "codes": []
                     }
                   }
                 }
@@ -570,15 +572,32 @@
         "tags": [
           "Clavier"
         ],
-        "summary": "Définir le code du clavier",
-        "operationId": "setKPDCode",
-        "description": "Le code est persisté immédiatement. L'écriture radio vers le clavier est différée jusqu'à trente secondes si celui-ci vient d'être appairé : écrire pendant son cycle d'initialisation le désynchronise.",
+        "summary": "Remplacer les codes du clavier",
+        "operationId": "setKPDCodes",
+        "description": "Remplace la liste entière : relire, modifier, renvoyer. Les codes sont persistés immédiatement et partent au prochain réveil du clavier, qui vérifie lui-même le code tapé. Une liste vide est acceptée : le clavier n'est alors plus servi (sans code, sa touche OFF suffirait à désarmer). Une liste refusée n'est pas enregistrée, même en partie.",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/KPDCodeUpdate"
+                "$ref": "#/components/schemas/KPDCodesUpdate"
+              },
+              "examples": {
+                "two": {
+                  "summary": "Deux codes",
+                  "value": {
+                    "codes": [
+                      {
+                        "password": "4821",
+                        "label": "Moi"
+                      },
+                      {
+                        "password": "1357",
+                        "label": "Invité"
+                      }
+                    ]
+                  }
+                }
               }
             }
           }
@@ -595,63 +614,11 @@
             }
           },
           "400": {
-            "description": "Le code doit comporter exactement quatre chiffres.",
+            "description": "Liste refusée : un code qui n'est pas exactement quatre chiffres, deux codes identiques, ou plus de dix codes.",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "404": {
-            "description": "Aucun clavier appairé.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Plusieurs claviers appairés : l'API refuse d'en choisir un.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Échec de la sauvegarde.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "Clavier"
-        ],
-        "summary": "Supprimer le code du clavier",
-        "operationId": "deleteKPDCode",
-        "responses": {
-          "200": {
-            "description": "Effectué.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OK"
                 }
               }
             }
@@ -1077,6 +1044,89 @@
           },
           "400": {
             "description": "JSON malformé ou valeur refusée.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "description": "Échec de la sauvegarde.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/config/update": {
+      "get": {
+        "tags": [
+          "Configuration"
+        ],
+        "summary": "Lire la configuration des mises à jour",
+        "operationId": "getUpdateConfig",
+        "responses": {
+          "200": {
+            "description": "Réglages courants.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateConfig"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Configuration"
+        ],
+        "summary": "Activer ou couper l'installation automatique",
+        "operationId": "updateUpdateConfig",
+        "description": "Pris en compte au prochain check (toutes les 6 h, le premier 10 min après le démarrage), sans redémarrage.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateConfig"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Enregistré, réglages relus.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateConfig"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "JSON malformé ou `auto` absent.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1659,7 +1709,7 @@
             "$ref": "#/components/responses/NotFound"
           },
           "409": {
-            "description": "Une installation est déjà en cours.",
+            "description": "Une installation est déjà en cours, attend son reboot, ou le binaire courant est encore en essai.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2152,7 +2202,7 @@
       },
       "Sensor": {
         "type": "object",
-        "description": "Capteur tel que le MCU le connaît. `open` ne vaut que pour un DWS et `motion` que pour un PIR : le firmware expose un booléen générique, décodé selon le type.",
+        "description": "Capteur tel que le MCU le connaît. `open` ne vaut que pour un DWS et `motion` que pour un PIR : absents sur les autres types, et absents aussi tant que le capteur n'a pas rapporté son état depuis le démarrage (état inconnu, pas fermé).",
         "required": [
           "id",
           "type",
@@ -2160,8 +2210,6 @@
           "item_id",
           "battery",
           "reachable",
-          "open",
-          "motion",
           "last_seen"
         ],
         "properties": {
@@ -2211,11 +2259,11 @@
           },
           "open": {
             "type": "boolean",
-            "description": "DWS : ouvrant ouvert. Toujours `false` sur les autres types."
+            "description": "DWS : ouvrant ouvert. Absent tant que l'état est inconnu, et sur les autres types."
           },
           "motion": {
             "type": "boolean",
-            "description": "PIR : mouvement en cours. Toujours `false` sur les autres types."
+            "description": "PIR : mouvement en cours. Absent tant que l'état est inconnu, et sur les autres types."
           },
           "kpd_state": {
             "type": "string",
@@ -2526,6 +2574,19 @@
           }
         }
       },
+      "UpdateConfig": {
+        "type": "object",
+        "description": "Mises à jour. `auto` installe la dernière release seule, uniquement alarme désarmée ; jamais vers une version antérieure. Si le nouveau binaire ne tient pas son essai de 40 min en 4 démarrages, boot.sh remet l'ancien et la release n'est plus reproposée.",
+        "required": [
+          "auto"
+        ],
+        "properties": {
+          "auto": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
       "AlarmConfig": {
         "type": "object",
         "description": "Comportement de l'alarme.\n\nEn mode `standalone`, le moteur local décide. En mode `alarmo`, Home Assistant Alarmo est la source de vérité et le moteur local est désactivé.\n\nEn lecture, les huit champs sont toujours présents : les valeurs par défaut sont appliquées à la volée.",
@@ -2654,7 +2715,8 @@
           "homekit",
           "admin",
           "web",
-          "alarm"
+          "alarm",
+          "update"
         ],
         "properties": {
           "mqtt": {
@@ -2671,6 +2733,9 @@
           },
           "alarm": {
             "$ref": "#/components/schemas/AlarmConfig"
+          },
+          "update": {
+            "$ref": "#/components/schemas/UpdateConfig"
           }
         }
       },
@@ -2784,12 +2849,35 @@
           }
         }
       },
-      "KPDCode": {
+      "KPDCodeEntry": {
         "type": "object",
-        "description": "Code PIN du clavier. Renvoyé en clair : c'est celui qui désarme l'alarme, l'interface l'affiche pour que l'utilisateur le retrouve. Ne pas exposer cette API hors du réseau local.",
+        "required": [
+          "password"
+        ],
+        "properties": {
+          "password": {
+            "type": "string",
+            "pattern": "^[0-9]{4}$",
+            "description": "Exactement 4 chiffres.",
+            "examples": [
+              "4821"
+            ]
+          },
+          "label": {
+            "type": "string",
+            "description": "Nom du code, absent s'il n'en a pas. Les espaces autour sont retirés.",
+            "examples": [
+              "Moi"
+            ]
+          }
+        }
+      },
+      "KPDCodes": {
+        "type": "object",
+        "description": "Codes du clavier, renvoyés en clair : ce sont eux qui désarment l'alarme, l'interface les affiche pour que l'utilisateur les retrouve. Ne pas exposer cette API hors du réseau local.",
         "required": [
           "sensor_id",
-          "code"
+          "codes"
         ],
         "properties": {
           "sensor_id": {
@@ -2799,57 +2887,27 @@
               14
             ]
           },
-          "code": {
-            "description": "Code configuré, ou `null` si le clavier n'en a pas.",
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "type": "object",
-                "required": [
-                  "password",
-                  "label"
-                ],
-                "properties": {
-                  "password": {
-                    "type": "string",
-                    "pattern": "^[0-9]{4}$",
-                    "examples": [
-                      "4821"
-                    ]
-                  },
-                  "label": {
-                    "type": "string",
-                    "description": "Nom du code. Vaut `Code` si rien n'a été précisé.",
-                    "examples": [
-                      "admin"
-                    ]
-                  }
-                }
-              }
-            ]
+          "codes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KPDCodeEntry"
+            }
           }
         }
       },
-      "KPDCodeUpdate": {
+      "KPDCodesUpdate": {
         "type": "object",
         "required": [
-          "password"
+          "codes"
         ],
         "properties": {
-          "password": {
-            "type": "string",
-            "pattern": "^[0-9]{4}$",
-            "description": "Exactement 4 chiffres. Le firmware n'en accepte qu'un seul par installation.",
-            "examples": [
-              "4821"
-            ]
-          },
-          "label": {
-            "type": "string",
-            "description": "Nom du code.",
-            "default": "Code"
+          "codes": {
+            "type": "array",
+            "maxItems": 10,
+            "description": "La liste complète, sans doublon. Au plus 10 codes : marge prudente, pas une limite connue du clavier.",
+            "items": {
+              "$ref": "#/components/schemas/KPDCodeEntry"
+            }
           }
         }
       },

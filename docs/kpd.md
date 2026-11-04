@@ -198,7 +198,16 @@ is initialized to `2` at startup and reset to `startCnt+10` after each reinit.
 
 ## Code management
 
-The PIN code is stored in `config.SensorEntry.KPDCode` (4-digit string) and sent to the
+> **Current format.** The codes are a list, `config.SensorEntry.KPDCodes`
+> (4 digits each), pushed whole as the answer to every `5509` wake: a u16 LE
+> byte count, then for each code its length and its digits, two per byte,
+> low nibble first, `1`..`9` as `0`..`8` and `0` as `0x0a`
+> (`keypadCodes` in `internal/radio/sensors.go`). The keypad checks a typed
+> code against that list itself. Several codes work on the hardware
+> (verified 2026-10-29 with two). What follows is the original, historical
+> reading.
+
+The PIN code was stored in `config.SensorEntry.KPDCode` (4-digit string) and sent to the
 KPD in two places during reinit:
 - **Config frame** (`payload: 55 00 04 <hash> 00 00 00`): the hash is `sum_of_digits + 4`
   (e.g. `1+2+3+4 + 4 = 14 = 0x0E`)

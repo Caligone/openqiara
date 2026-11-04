@@ -29,7 +29,7 @@ d'une route inexistante :
 - **`410 Gone`** — une route non versionnée, retirée définitivement. Les
   correspondances sont dans les tableaux ci-dessous ; elles ne sont pas
   calculables mécaniquement (`/api/alarm` est devenu
-  `/api/v1/commands/alarm`, `/api/codes` est devenu `/api/v1/kpd/code`).
+  `/api/v1/commands/alarm`, `/api/codes` est devenu `/api/v1/kpd/codes`).
 - **`404 Not Found`** — une route `/api/v1/…` absente de cette version :
   faute de frappe, méthode non supportée, ou route plus récente que le
   daemon installé. Réessayer après mise à jour a du sens, là où un `410`
@@ -76,7 +76,7 @@ acceptée. Trois cas où l'écart est visible :
   vérité arrive quelques centaines de ms plus tard via MQTT et peut
   contredire la réponse. Pour l'état réel, lire `GET /api/v1/alarm` ou
   s'abonner au flux SSE.
-- `PUT /kpd/code` persiste le code ; il part au prochain réveil du
+- `PUT /kpd/codes` persiste les codes ; ils partent au prochain réveil du
   clavier. Le `200` ne dit rien du clavier, seulement de la config.
 
 Ne « corrigez » pas les commandes en ressources REST : elles ne modélisent
@@ -131,16 +131,23 @@ qu'il se taise.
 Boucler sur `GET` jusqu'à `done:true`, puis `DELETE` pour libérer la session
 si l'utilisateur abandonne.
 
-### Code clavier (KPD)
+### Codes clavier (KPD)
 
 | Méthode | Chemin | Corps | Réponse |
 |---|---|---|---|
-| `GET` | `/api/v1/kpd/code` | — | `{sensor_id, code: {password, label} \| null}` |
-| `PUT` | `/api/v1/kpd/code` | `{password, label?}` | `{ok:true}` |
-| `DELETE` | `/api/v1/kpd/code` | — | `{ok:true}` |
+| `GET` | `/api/v1/kpd/codes` | — | `{sensor_id, codes: [{password, label?}]}` |
+| `PUT` | `/api/v1/kpd/codes` | `{codes: [{password, label?}]}` | `{ok:true}` |
 
-`password` = exactement 4 chiffres. Un seul code par installation : c'est
-une contrainte du firmware, pas un choix d'API.
+`PUT` remplace la liste entière : relire, modifier, renvoyer. Le clavier
+reçoit la liste à chaque réveil et vérifie lui-même le code tapé.
+
+- `password` = exactement 4 chiffres, sans doublon dans la liste.
+- Au plus 10 codes. Ce n'est pas une limite connue du clavier (deux codes
+  vérifiés sur le matériel), mais une marge prudente.
+- Une liste vide est acceptée : le clavier n'est alors plus servi, il ne
+  peut plus ni armer ni désarmer (sans code, sa touche OFF suffirait à
+  désarmer).
+- Une liste refusée (`400`) n'est pas enregistrée, même en partie.
 
 Le modèle assume **un seul clavier** :
 
@@ -158,6 +165,7 @@ Le modèle assume **un seul clavier** :
 | `/api/v1/config/admin` | `{password_set}` — **jamais** le mot de passe ni son hash | `{password}` (8 caractères min., vide refusé) — `DELETE` désactive l'auth |
 | `/api/v1/config/alarm` | idem | `{mode?, alarmo_command_topic?, alarmo_state_topic?, siren_sounds?, arming_delay_seconds?, pending_delay_seconds?, wail_duration_seconds?, shutter_follows_alarm?}` |
 | `/api/v1/config/web` | `{enabled}` | `{enabled}` |
+| `/api/v1/config/update` | `{auto}` | `{auto}` |
 
 Contraintes validées côté serveur (`400` sinon) :
 
@@ -178,10 +186,10 @@ Notes :
   setup code HomeKit. Renvoyer cette valeur telle quelle en écriture laisse
   le secret stocké intact, ce qui permet à un client de relire la config et
   de la réécrire sans effacer ce qu'il n'a pas vu.
-- **Le code PIN du clavier fait exception** : `GET /api/v1/kpd/code` le
-  renvoie en clair, parce que l'UI l'affiche pour que l'utilisateur le
-  retrouve. C'est le code qui désarme l'alarme — ne pas exposer cette API
-  hors du réseau local, et configurer un mot de passe admin.
+- **Les codes du clavier font exception** : `GET /api/v1/kpd/codes` les
+  renvoie en clair, parce que l'UI les affiche pour que l'utilisateur les
+  retrouve. Ce sont les codes qui désarment l'alarme — ne pas exposer cette
+  API hors du réseau local, et configurer un mot de passe admin.
 - `PUT /config/mqtt` répond `{"reboot_required":true}` : le broker n'est lu
   qu'au boot. `PUT /config/web` répond `{"restart_required":true}`.
 
@@ -194,6 +202,27 @@ Notes :
 
 `503` si l'OTA n'est pas configuré (build local sans `-ldflags`), `502` si
 GitHub est injoignable.
+
+Installation automatique (`PUT /config/update {"auto":true}`, coupée par
+défaut) : check toutes les 6 h, le premier 10 min après le démarrage, et
+install seulement alarme désarmée, d'une release plus récente (jamais de
+retour à une version antérieure). Toute install OTA, manuelle comprise,
+attend que l'alarme soit désarmée pour rebooter (état inconnu compris).
+
+Seules les 30 dernières releases servent à juger « plus récente » : une
+caméra plus en retard que ça n'est plus mise à jour automatiquement.
+
+Le nouveau binaire est en essai 40 min (la santé du watchdog MCU ne voit
+une radio muette qu'après 30 min), puis adopté au premier contrôle de santé
+OK. Au-delà de 4 démarrages avant ça, plantage ou reboot, `boot.sh` remet
+l'ancien binaire et l'ancien `boot.sh`, reboote, et l'auto-update ne
+repropose plus ce tag (`/data/ota_failed`). Une bascule ratée au boot
+(/data plein) fait de même. Deux coupures de courant pendant l'essai
+suffisent à rejeter une bonne release : la réinstaller à la main. Tag perdu
+(`unknown`) : l'auto-update s'arrête jusqu'à ce qu'on supprime
+`/data/ota_failed`. Pendant l'essai, ou tant qu'une install attend son
+reboot, une nouvelle install répond `409` ; `scripts/deploy.sh` met fin à
+l'essai.
 
 ---
 

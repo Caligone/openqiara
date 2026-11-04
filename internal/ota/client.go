@@ -70,7 +70,7 @@ func (c *Client) CheckLatest(ctx context.Context, force bool) (*CheckResult, err
 	// qu'on est en alpha, toutes les tags sont prerelease, donc /latest
 	// renverrait 404. La liste est triée par GitHub du plus récent au plus
 	// ancien — on prend simplement le premier non-draft.
-	url := fmt.Sprintf("https://api.github.com/repos/%s/releases?per_page=10", c.repo)
+	url := fmt.Sprintf("https://api.github.com/repos/%s/releases?per_page=30", c.repo)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build github request: %w", err)
@@ -110,6 +110,7 @@ func (c *Client) CheckLatest(ctx context.Context, force bool) (*CheckResult, err
 		Current:      c.currentVer,
 		Latest:       rel,
 		UpdateNeeded: shouldOfferUpdate(c.currentVer, rel.TagName),
+		Newer:        listedAfterLatest(c.currentVer, list),
 		CheckedAt:    time.Now().UTC().Format(time.RFC3339),
 	}
 	c.cacheResult(res)
@@ -161,6 +162,24 @@ func shouldOfferUpdate(current, latest string) bool {
 		cur = cur[:i]
 	}
 	return cur != latest
+}
+
+// listedAfterLatest dit si la version courante est une release plus
+// ancienne que la dernière : elle apparaît plus loin dans la liste, triée
+// par GitHub du plus récent au plus ancien. Absente (build local, release
+// supprimée, trop ancienne), on ne sait pas : false. C'est ce qui empêche
+// l'auto-update de rétrograder quand la dernière release est retirée.
+func listedAfterLatest(current string, list []Release) bool {
+	cur := current
+	if i := indexByte(cur, ' '); i >= 0 {
+		cur = cur[:i]
+	}
+	for _, r := range list[1:] {
+		if r.TagName == cur {
+			return true
+		}
+	}
+	return false
 }
 
 func indexByte(s string, b byte) int {

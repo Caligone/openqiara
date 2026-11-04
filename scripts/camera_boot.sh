@@ -108,14 +108,14 @@ rotate_log /data/boot_debug.log
 
 # Purge lumberjack's timestamped rotations (openqiarad-2026-...-.log) and any
 # orphaned OTA binaries left on /media by past installs or manual deploys.
-# Keep only: the live binary (/media/openqiarad, no suffix), its .old rollback,
-# the .new pending-swap, and the .rollback. Everything else (.bak*, .pre*,
-# _new, .rc2upx…) is a leftover safe to remove.
+# Keep only: the live binary (/media/openqiarad, no suffix), its .old rollback
+# and the .new pending-swap. Everything else (.bak*, .pre*, _new, .rc2upx,
+# the .rollback of older releases…) is a leftover safe to remove.
 rm -f /data/openqiarad-*.log 2>/dev/null
 for b in /media/openqiarad /media/openqiarad.* /media/openqiarad_*; do
     [ -e "$b" ] || continue
     case "$b" in
-        /media/openqiarad|/media/openqiarad.old|/media/openqiarad.new|/media/openqiarad.rollback) ;;
+        /media/openqiarad|/media/openqiarad.old|/media/openqiarad.new) ;;
         *) rm -f "$b" 2>/dev/null ;;
     esac
 done
@@ -193,30 +193,90 @@ sleep 2
 # hls, the vendor's segmenter, stays off: openqiarad serves the HLS of
 # the web view itself (internal/hlsserver), from what hlcamd multicasts.
 
-# Apply a pending OTA binary swap. onComplete (openqiarad) stages the new
-# binary on /media and reboots, leaving /data/ota_pending with its path.
-# Here, at boot, nothing holds /data/openqiarad open, so the inode frees and
-# /data has room — the swap that failed at runtime succeeds. We verify the
-# copied size matches the staged file and roll back on mismatch, so a
-# truncated copy (the original bug) never leaves a dead binary behind.
-if [ -f /data/ota_pending ]; then
-    STAGED=$(cat /data/ota_pending)
-    if [ -f "$STAGED" ]; then
-        WANT=$(wc -c < "$STAGED")
-        cp -f /data/openqiarad /media/openqiarad.rollback 2>/dev/null
-        rm -f /data/openqiarad
-        sync
-        if cp "$STAGED" /data/openqiarad && [ "$(wc -c < /data/openqiarad)" = "$WANT" ]; then
-            chmod 755 /data/openqiarad
-            echo "[ota] swapped to $STAGED at $(date -Iseconds)" >> /data/openqiarad.log
-        else
-            echo "[ota] swap FAILED (size mismatch), rolling back at $(date -Iseconds)" >> /data/openqiarad.log
-            cp -f /media/openqiarad.rollback /data/openqiarad && chmod 755 /data/openqiarad
-        fi
-        rm -f /media/openqiarad.rollback "$STAGED"
+# --- ota begin (tested by internal/ota/bootsh_trial_test.go)
+# OTA swap and trial (internal/ota/auto.go). openqiarad stages the new binary
+# on /media, keeps the old one in /media/openqiarad.old, writes
+# /data/ota_pending (staged path) and /data/ota_pending_tag, and reboots.
+#
+# ota_swap, at boot: nothing holds /data/openqiarad open, so the inode frees
+# and /data has room. A copy of the wrong size puts the old binary back and
+# marks the tag failed, or the auto-update would retry it every 6 h. A good
+# one starts a trial: /data/ota_trial holds the tag.
+#
+# ota_launch, before every start of openqiarad: on trial, one line more in
+# ota_trial. Past 4 starts without openqiarad confirming (40 min up, healthy),
+# roll back: old binary, old boot.sh, tag in ota_failed, reboot so both
+# start together. Starts, not exits, and on disk: a binary that stays up but
+# fails its health stops feeding the MCU watchdog, which reboots the camera.
+# 4: openqiarad exits once at a normal start while the radio is not free.
+OTA_DATA=${OTA_DATA:-/data}
+OTA_MEDIA=${OTA_MEDIA:-/media}
+
+ota_copy() { # src dst: copy, check the size, make it executable
+    _want=$(wc -c < "$1")
+    rm -f "$2"
+    cp "$1" "$2" && [ "$(wc -c < "$2")" = "$_want" ] && chmod 755 "$2"
+}
+
+# ota_restore tag: the old binary and the old boot.sh back, the tag in
+# ota_failed ("unknown" if lost: the auto-update then stops, see auto.go).
+# boot.sh is running: replace it by rename, never rewrite it in place.
+ota_restore() {
+    ota_copy "$OTA_MEDIA/openqiarad.old" "$OTA_DATA/openqiarad" || return 1
+    if [ -f "$OTA_DATA/boot.sh.old" ] && cp "$OTA_DATA/boot.sh.old" "$OTA_DATA/boot.sh.tmp"; then
+        chmod 755 "$OTA_DATA/boot.sh.tmp" && mv -f "$OTA_DATA/boot.sh.tmp" "$OTA_DATA/boot.sh"
     fi
-    rm -f /data/ota_pending
-fi
+    echo "${1:-unknown}" > "$OTA_DATA/ota_failed"
+}
+
+ota_swap() {
+    if [ -f "$OTA_DATA/ota_pending" ]; then
+        _staged=$(cat "$OTA_DATA/ota_pending")
+        _tag=$(cat "$OTA_DATA/ota_pending_tag" 2>/dev/null)
+        if [ -f "$_staged" ]; then
+            sync
+            if ota_copy "$_staged" "$OTA_DATA/openqiarad"; then
+                echo "${_tag:-unknown}" > "$OTA_DATA/ota_trial"
+                echo "[ota] swapped to $_tag at $(date -Iseconds), on trial" >> "$OTA_DATA/openqiarad.log"
+            else
+                echo "[ota] swap to $_tag FAILED (size mismatch), back to the old binary at $(date -Iseconds)" >> "$OTA_DATA/openqiarad.log"
+                ota_restore "$_tag"
+            fi
+            rm -f "$_staged"
+        fi
+        rm -f "$OTA_DATA/ota_pending"
+    fi
+    # Always: a tag left by an older boot.sh (downgrade) must not stick to
+    # the next install.
+    rm -f "$OTA_DATA/ota_pending_tag"
+    sync
+}
+
+ota_launch() {
+    [ -f "$OTA_DATA/ota_trial" ] || return 0
+    echo start >> "$OTA_DATA/ota_trial"
+    sync
+    # The tag line, then one line per start.
+    [ "$(wc -l < "$OTA_DATA/ota_trial")" -gt 5 ] || return 0
+    _tag=$(sed -n 1p "$OTA_DATA/ota_trial")
+    echo "[ota] trial of $_tag failed, rolling back at $(date -Iseconds)" >> "$OTA_DATA/openqiarad.log"
+    if [ ! -f "$OTA_MEDIA/openqiarad.old" ]; then
+        echo "[ota] no old binary to roll back to, keeping $_tag" >> "$OTA_DATA/openqiarad.log"
+        rm -f "$OTA_DATA/ota_trial"
+        return 0
+    fi
+    if ! ota_restore "$_tag"; then
+        echo "[ota] rollback copy FAILED at $(date -Iseconds)" >> "$OTA_DATA/openqiarad.log"
+        return 0
+    fi
+    rm -f "$OTA_DATA/ota_trial"
+    sync
+    reboot
+    sleep 60 # reboot returns at once: do not start the old binary meanwhile
+}
+# --- ota end
+
+ota_swap
 
 # Start openqiarad on port 80 (default HTTP, so http://openqiara.local works
 # directly without a port in the URL). openqiarad is the radio gateway:
@@ -231,6 +291,7 @@ fi
 # go of it) or on a crash; to deploy, replace the binary and kill it.
 (
     while :; do
+        ota_launch
         /data/openqiarad -web :80 -log /data/openqiarad.log >/dev/null 2>&1
         echo "[boot] openqiarad exited ($?) at $(date -Iseconds), restarting" >> /data/openqiarad.log
         sleep 10

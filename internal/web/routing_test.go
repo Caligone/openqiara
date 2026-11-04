@@ -128,7 +128,7 @@ func TestV1RoutesAreServed(t *testing.T) {
 		{"GET", "/api/v1/config/admin"},
 		{"GET", "/api/v1/config/alarm"},
 		{"GET", "/api/v1/config/web"},
-		{"GET", "/api/v1/kpd/code"},
+		{"GET", "/api/v1/kpd/codes"},
 	}
 	for _, r := range routes {
 		t.Run(r.method+" "+r.path, func(t *testing.T) {
@@ -162,9 +162,9 @@ func TestKPDCodeResolution(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newTestServer(t, tc.sensors)
-			code, _ := do(t, h, "GET", "/api/v1/kpd/code")
+			code, _ := do(t, h, "GET", "/api/v1/kpd/codes")
 			if code != tc.want {
-				t.Errorf("GET /api/v1/kpd/code = %d, want %d", code, tc.want)
+				t.Errorf("GET /api/v1/kpd/codes = %d, want %d", code, tc.want)
 			}
 		})
 	}

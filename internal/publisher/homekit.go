@@ -152,17 +152,19 @@ func (p *HomeKitPublisher) Start(ctx context.Context, sensors []camera.Sensor, c
 
 func (p *HomeKitPublisher) PublishSensorState(ctx context.Context, sensor camera.Sensor) error {
 	switch sensor.Type {
+	// Unknown state (nil, until the sensor reports after a start): left
+	// as it is, HAP has no value for it.
 	case "DWS":
-		if a, ok := p.contacts[sensor.ID]; ok {
+		if a, ok := p.contacts[sensor.ID]; ok && sensor.Open != nil {
 			state := characteristic.ContactSensorStateContactDetected
-			if sensor.Open {
+			if *sensor.Open {
 				state = characteristic.ContactSensorStateContactNotDetected
 			}
 			_ = a.ContactSensor.ContactSensorState.SetValue(state)
 		}
 	case "PIR":
-		if a, ok := p.motions[sensor.ID]; ok {
-			a.MotionSensor.MotionDetected.SetValue(sensor.Motion)
+		if a, ok := p.motions[sensor.ID]; ok && sensor.Motion != nil {
+			a.MotionSensor.MotionDetected.SetValue(*sensor.Motion)
 		}
 	case "SRN":
 		// On while it wails, whoever set it off (openqiara, Alarmo, or the

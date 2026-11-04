@@ -90,6 +90,7 @@ type fbxhomeRadio struct {
 // fbxhomeCode is a keypad code fbxhome pushes.
 type fbxhomeCode struct {
 	Password string `xml:"password,attr"`
+	Label    string `xml:"label,attr"`
 	Valid    bool   `xml:"valid,attr"`
 }
 
@@ -98,9 +99,10 @@ type fbxhomeCode struct {
 // pairing them again. Sensors match on their id, which is fbxhome's node
 // id; the ones fbxhome knew and the config does not are added, unless
 // they were deleted. A sensor that already has a radio identity keeps it.
-// A keypad without a code in the config gets fbxhome's: the engine pushes
-// the config's codes, and an empty list would let its off button alone
-// disarm. It returns the ids imported, none without fbxhome state.
+// A keypad without a code in the config gets fbxhome's valid ones: the
+// engine pushes the config's codes, and an empty list would let its off
+// button alone disarm. It returns the ids imported, none without fbxhome
+// state.
 func ImportFbxhomeRadio(store *config.Store, glob string) ([]int, error) {
 	states, err := fbxhomeStates(glob)
 	if errors.Is(err, errNoFbxhomeXML) {
@@ -147,9 +149,11 @@ func ImportFbxhomeRadio(store *config.Store, glob string) ([]int, error) {
 			se.Type = sensorTypeFromNodeType[n.Type]
 			se.Radio = config.RadioNode{Addr: n.Addr, UID: n.UID, SystemIndex: n.SystemIndex}
 			se.Battery = n.Battery
-			if se.Type == "KPD" && se.KPDCode == "" {
-				if c := slices.IndexFunc(n.Codes, func(c fbxhomeCode) bool { return c.Valid }); c >= 0 {
-					se.KPDCode = n.Codes[c].Password
+			if se.Type == "KPD" && len(se.KPDCodes) == 0 {
+				for _, c := range n.Codes {
+					if c.Valid {
+						se.KPDCodes = append(se.KPDCodes, config.KPDCode{Password: c.Password, Label: c.Label})
+					}
 				}
 			}
 		}

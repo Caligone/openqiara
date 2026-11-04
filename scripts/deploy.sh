@@ -37,8 +37,10 @@ fi
 echo "==> Swapping the binary and stopping the old process..."
 # boot.sh restarts openqiarad within ~10 s of its exit; a camera on an
 # older boot.sh does not, so it is started here if nothing came back.
+# A manual deploy ends any OTA trial: boot.sh would roll it back otherwise.
 $SSH_CMD 'fbxupstartctl stop fbxhome 2>/dev/null; killall fbxhome 2>/dev/null
 	mv -f /media/openqiarad.new /media/openqiarad && ln -sf /media/openqiarad /data/openqiarad
+	rm -f /data/ota_trial
 	killall openqiarad 2>/dev/null; true'
 sleep 15
 if ! $SSH_CMD 'pidof openqiarad >/dev/null'; then

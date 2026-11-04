@@ -3,6 +3,8 @@ package web
 import (
 	"encoding/json"
 	"net/http"
+
+	"github.com/caligone/openqiara/internal/config"
 )
 
 // handleUpdateCheck interroge l'API GitHub (cache 1h) et retourne les
@@ -81,4 +83,31 @@ func (s *Server) handleUpdateStatus(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, s.otaInstaller.Status())
+}
+
+func (s *Server) handleGetUpdateConfig(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, s.store.Get().Update)
+}
+
+// handlePutUpdateConfig active ou coupe l'installation automatique des
+// releases. Pris en compte au prochain check, sans redémarrage.
+func (s *Server) handlePutUpdateConfig(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Auto *bool `json:"auto"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "JSON invalide")
+		return
+	}
+	if body.Auto == nil {
+		writeErr(w, http.StatusBadRequest, "champ 'auto' requis")
+		return
+	}
+	if err := s.store.Update(func(cfg *config.Config) {
+		cfg.Update.Auto = *body.Auto
+	}); err != nil {
+		writeErr(w, http.StatusInternalServerError, "échec sauvegarde: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, s.store.Get().Update)
 }
