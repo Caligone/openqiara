@@ -10,6 +10,9 @@ Toutes les réponses sont en JSON, y compris les erreurs :
 {"error": "le code doit être composé de 4 chiffres"}
 ```
 
+Le corps d'une requête est limité à 64 Kio (la caméra a 128 Mo de RAM, sans
+swap) : au-delà, la réponse est un `400`.
+
 > **Spécification machine** — [`openapi.json`](openapi.json) (OpenAPI 3.1)
 > décrit les mêmes routes avec leurs schémas complets : de quoi générer un
 > client, alimenter Postman ou Bruno, ou produire une page de documentation :
