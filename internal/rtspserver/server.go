@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/bluenviron/gortsplib/v5"
 	"github.com/bluenviron/gortsplib/v5/pkg/base"
@@ -83,7 +85,17 @@ type Server struct {
 	// each IDR for clients that joined mid-GOP.
 	sps []byte
 	pps []byte
+
+	// dropped counts the packets dropped for slow readers since the last
+	// summary, logged at most every dropLogEvery.
+	dropped    atomic.Int64
+	dropMu     sync.Mutex
+	dropLogged time.Time
 }
+
+// dropLogEvery rate-limits the dropped packets summary: a slow reader
+// drops hundreds of packets per second.
+const dropLogEvery = 10 * time.Second
 
 // New returns an RTSP server. The hub is the shared media pipeline the
 // server subscribes to on the first reader; if nil, New panics — the RTSP
@@ -155,6 +167,21 @@ func (s *Server) Start(ctx context.Context) error {
 }
 
 // --- gortsplib.ServerHandler ---
+
+// OnStreamWriteError implements gortsplib.ServerHandlerOnStreamWriteError,
+// called for each packet dropped because a reader's write queue is full.
+// Without it gortsplib logs every single one, hundreds per second on a slow
+// Wi-Fi link: count them and log a summary instead.
+func (s *Server) OnStreamWriteError(ctx *gortsplib.ServerHandlerOnStreamWriteErrorCtx) {
+	s.dropped.Add(1)
+	s.dropMu.Lock()
+	defer s.dropMu.Unlock()
+	if time.Since(s.dropLogged) < dropLogEvery {
+		return
+	}
+	s.dropLogged = time.Now()
+	s.log.Warn("rtsp: reader too slow, packets dropped", "dropped", s.dropped.Swap(0), "error", ctx.Error)
+}
 
 // OnConnOpen implements gortsplib.ServerHandlerOnConnOpen.
 func (s *Server) OnConnOpen(_ *gortsplib.ServerHandlerOnConnOpenCtx) {}
