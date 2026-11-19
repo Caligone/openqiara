@@ -59,6 +59,12 @@ type HAPublisher struct {
 	// connection, letting the caller refresh live state (sensor/alarm). May be nil.
 	onConnect func()
 
+	// tempEntities: sensors whose temperature entity exists (made with their
+	// first reading, see PublishState), kept to rediscover it on reconnect.
+	// Own lock: republishDiscovery may not take mu.
+	tempMu       sync.Mutex
+	tempEntities map[int]*int // last temperature seen
+
 	watchdogOnce sync.Once
 	disconnected time.Time // zero when connected; set on first observed disconnect
 
@@ -239,6 +245,19 @@ func (p *HAPublisher) republishDiscovery(ctx context.Context) {
 		if err := p.publishDiscovery(ctx, s); err != nil {
 			p.log.Warn("discovery publish failed", "sensor_id", s.ID, "error", err)
 		}
+		// p.sensors is the list taken at the start: a temperature reported
+		// since would be forgotten on this connection.
+		p.tempMu.Lock()
+		if s.Temperature == nil {
+			s.Temperature = p.tempEntities[s.ID]
+		} else if p.tempEntities[s.ID] == nil {
+			// Created here: the first reading must not create it again.
+			if p.tempEntities == nil {
+				p.tempEntities = map[int]*int{}
+			}
+			p.tempEntities[s.ID] = s.Temperature
+		}
+		p.tempMu.Unlock()
 		for _, extra := range buildExtraDiscoveryTopics(p.prefix, s) {
 			payload, err := json.Marshal(extra.Payload)
 			if err != nil {
@@ -378,6 +397,25 @@ func (p *HAPublisher) PublishState(ctx context.Context, sensor camera.Sensor) er
 	payload, err := marshalState(sensor)
 	if err != nil {
 		return err
+	}
+
+	// First temperature of the sensor: its entity is created before the state
+	// that feeds it.
+	if sensor.Temperature != nil {
+		p.tempMu.Lock()
+		known := p.tempEntities[sensor.ID] != nil
+		p.tempMu.Unlock()
+		if !known {
+			topic, d := temperatureDiscovery(p.prefix, sensor)
+			if data, err := json.Marshal(d); err == nil && p.publish(ctx, topic, data, retained) == nil {
+				p.tempMu.Lock()
+				if p.tempEntities == nil {
+					p.tempEntities = map[int]*int{}
+				}
+				p.tempEntities[sensor.ID] = sensor.Temperature
+				p.tempMu.Unlock()
+			}
+		}
 	}
 
 	topic := stateTopic(p.prefix, sensor.ID)

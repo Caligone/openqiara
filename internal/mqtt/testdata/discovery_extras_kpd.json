@@ -19,26 +19,5 @@
       "unit_of_measurement": "%",
       "value_template": "{{ value_json.battery }}"
     }
-  },
-  {
-    "topic": "homeassistant/sensor/openqiara_29_temperature/config",
-    "payload": {
-      "device": {
-        "identifiers": [
-          "openqiara_29"
-        ],
-        "manufacturer": "Qiara/Cofidur",
-        "model": "HOMELABKPD",
-        "name": "OpenQiara KPD 29",
-        "via_device": "openqiara_camera"
-      },
-      "device_class": "temperature",
-      "json_attributes_topic": "openqiara/sensor/29/state",
-      "name": "Température",
-      "state_topic": "openqiara/sensor/29/state",
-      "unique_id": "openqiara_kpd_29_temperature",
-      "unit_of_measurement": "°C",
-      "value_template": "{{ value_json.temperature if value_json.temperature is defined else None }}"
-    }
   }
 ]

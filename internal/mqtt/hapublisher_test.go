@@ -1,6 +1,7 @@
 package mqtt
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -291,5 +292,42 @@ func TestDiscoveryMetadata(t *testing.T) {
 		if n := e.Payload.Name; n != "Batterie" && n != "Température" {
 			t.Errorf("extra %s named %q", e.Topic, n)
 		}
+	}
+}
+
+// The temperature entity is created with the sensor's first reading, before
+// the state that feeds it, and rediscovered on reconnect even though the
+// sensor list taken at the start knows no temperature.
+func TestTemperatureEntityCreatedAtFirstReading(t *testing.T) {
+	p, c := newRecordingPublisher()
+	p.prefix = "openqiara"
+	s := camera.Sensor{ID: 20, Type: "PIR"}
+	p.sensors = []camera.Sensor{s}
+	tempTopic := "homeassistant/sensor/openqiara_20_temperature/config"
+	has := func(topic string) bool {
+		for _, m := range c.published {
+			if m.topic == topic {
+				return true
+			}
+		}
+		return false
+	}
+
+	_ = p.PublishState(context.Background(), s)
+	if has(tempTopic) {
+		t.Fatal("temperature entity created without a reading")
+	}
+
+	s.Temperature = new(21)
+	_ = p.PublishState(context.Background(), s)
+	if n := len(c.published); n != 3 || c.published[1].topic != tempTopic {
+		t.Fatalf("want entity then state, got %+v", c.published)
+	}
+	_ = p.PublishState(context.Background(), s) // already known: no new discovery
+
+	c.published = nil
+	p.republishDiscovery(context.Background())
+	if !has(tempTopic) {
+		t.Error("temperature entity not rediscovered on reconnect")
 	}
 }
