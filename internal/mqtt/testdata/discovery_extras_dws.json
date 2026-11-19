@@ -8,11 +8,12 @@
         ],
         "manufacturer": "Qiara/Cofidur",
         "model": "HOMELABDWS",
-        "name": "OpenQiara DWS 14"
+        "name": "OpenQiara DWS 14",
+        "via_device": "openqiara_camera"
       },
       "device_class": "battery",
       "json_attributes_topic": "openqiara/sensor/14/state",
-      "name": "OpenQiara DWS 14 Batterie",
+      "name": "Batterie",
       "state_topic": "openqiara/sensor/14/state",
       "unique_id": "openqiara_dws_14_battery",
       "unit_of_measurement": "%",
@@ -28,11 +29,12 @@
         ],
         "manufacturer": "Qiara/Cofidur",
         "model": "HOMELABDWS",
-        "name": "OpenQiara DWS 14"
+        "name": "OpenQiara DWS 14",
+        "via_device": "openqiara_camera"
       },
       "device_class": "temperature",
       "json_attributes_topic": "openqiara/sensor/14/state",
-      "name": "OpenQiara DWS 14 Température",
+      "name": "Température",
       "state_topic": "openqiara/sensor/14/state",
       "unique_id": "openqiara_dws_14_temperature",
       "unit_of_measurement": "°C",

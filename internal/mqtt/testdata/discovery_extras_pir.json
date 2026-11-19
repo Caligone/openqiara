@@ -8,11 +8,12 @@
         ],
         "manufacturer": "Qiara/Cofidur",
         "model": "HOMELABPIR",
-        "name": "OpenQiara PIR 20"
+        "name": "OpenQiara PIR 20",
+        "via_device": "openqiara_camera"
       },
       "device_class": "battery",
       "json_attributes_topic": "openqiara/sensor/20/state",
-      "name": "OpenQiara PIR 20 Batterie",
+      "name": "Batterie",
       "state_topic": "openqiara/sensor/20/state",
       "unique_id": "openqiara_pir_20_battery",
       "unit_of_measurement": "%",
@@ -28,11 +29,12 @@
         ],
         "manufacturer": "Qiara/Cofidur",
         "model": "HOMELABPIR",
-        "name": "OpenQiara PIR 20"
+        "name": "OpenQiara PIR 20",
+        "via_device": "openqiara_camera"
       },
       "device_class": "temperature",
       "json_attributes_topic": "openqiara/sensor/20/state",
-      "name": "OpenQiara PIR 20 Température",
+      "name": "Température",
       "state_topic": "openqiara/sensor/20/state",
       "unique_id": "openqiara_pir_20_temperature",
       "unit_of_measurement": "°C",

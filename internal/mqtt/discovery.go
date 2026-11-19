@@ -8,6 +8,28 @@ import (
 	"github.com/caligone/openqiara/internal/camera"
 )
 
+// cameraDeviceID is the identifier of the camera's device in Home Assistant.
+const cameraDeviceID = "openqiara_camera"
+
+// cameraVersion is the daemon's version, shown as the camera device's
+// sw_version.
+var cameraVersion string
+
+// SetCameraVersion records the version published in the camera's device block.
+// To be called before the publisher starts.
+func SetCameraVersion(v string) { cameraVersion = v }
+
+// cameraDevice is the camera's own device block.
+func cameraDevice() haDevice {
+	return haDevice{
+		Identifiers:  []string{cameraDeviceID},
+		Name:         "OpenQiara Caméra",
+		Manufacturer: "Qiara/Cofidur",
+		Model:        "HOMELABCAM",
+		SWVersion:    cameraVersion,
+	}
+}
+
 // sensorMeta describes how a sensor type maps to HA auto-discovery.
 type sensorMeta struct {
 	domain      string // HA domain: "binary_sensor", "siren"
@@ -34,6 +56,8 @@ func sensorDevice(sensor camera.Sensor) haDevice {
 		Name:         sensorDisplayName(sensor),
 		Manufacturer: "Qiara/Cofidur",
 		Model:        modelForType(sensor.Type),
+		// The camera is the sensors' hub: Home Assistant draws the link.
+		ViaDevice: cameraDeviceID,
 	}
 }
 
@@ -76,7 +100,10 @@ func buildDiscoveryPayload(prefix string, sensor camera.Sensor) (discoveryPayloa
 
 	if sensor.Type == "SRN" {
 		p.CommandTopic = fmt.Sprintf("%s/siren/%d/set", prefix, sensor.ID)
-		p.ValueTemplate = "{{ value_json.active | lower }}"
+		// The MQTT siren reads its state through state_value_template only:
+		// value_template is ignored, so the state was never understood.
+		p.ValueTemplate = ""
+		p.StateValueTemplate = "{{ value_json.active | lower }}"
 		// state: alert_over is an alarm set off that no longer wails.
 		p.JSONAttributesTemplate = `{"battery": {{ value_json.battery }}, "reachable": {{ value_json.reachable | lower }}, "state": "{{ value_json.state | default('') }}"}`
 		p.PayloadOn = "true"
@@ -113,13 +140,15 @@ func buildExtraDiscoveryTopics(prefix string, sensor camera.Sensor) []struct {
 } {
 	st := stateTopic(prefix, sensor.ID)
 	device := sensorDevice(sensor)
-	name := sensorDisplayName(sensor)
 	typeLower := strings.ToLower(sensor.Type)
 
 	var extras []struct {
 		Topic   string
 		Payload discoveryPayload
 	}
+
+	// Named by what they are only: Home Assistant puts the device name in
+	// front, with the sensor's name in the entity name too it came twice.
 
 	// Battery sensor
 	extras = append(extras, struct {
@@ -128,7 +157,7 @@ func buildExtraDiscoveryTopics(prefix string, sensor camera.Sensor) []struct {
 	}{
 		Topic: fmt.Sprintf("homeassistant/sensor/openqiara_%d_battery/config", sensor.ID),
 		Payload: discoveryPayload{
-			Name:                name + " Batterie",
+			Name:                "Batterie",
 			UniqueID:            fmt.Sprintf("openqiara_%s_%d_battery", typeLower, sensor.ID),
 			DeviceClass:         "battery",
 			UnitOfMeasurement:   "%",
@@ -146,7 +175,7 @@ func buildExtraDiscoveryTopics(prefix string, sensor camera.Sensor) []struct {
 	}{
 		Topic: fmt.Sprintf("homeassistant/sensor/openqiara_%d_temperature/config", sensor.ID),
 		Payload: discoveryPayload{
-			Name:                name + " Température",
+			Name:                "Température",
 			UniqueID:            fmt.Sprintf("openqiara_%s_%d_temperature", typeLower, sensor.ID),
 			DeviceClass:         "temperature",
 			UnitOfMeasurement:   "°C",
@@ -192,12 +221,7 @@ func ShutterDiscoveryPayload(prefix string) (string, []byte) {
 		PayloadOn:     "open",
 		PayloadOff:    "closed",
 		Availability:  cameraAvailability(prefix),
-		Device: haDevice{
-			Identifiers:  []string{"openqiara_camera"},
-			Name:         "OpenQiara Caméra",
-			Manufacturer: "Qiara/Cofidur",
-			Model:        "HOMELABCAM",
-		},
+		Device:        cameraDevice(),
 	}
 	data, _ := json.Marshal(payload)
 	return topic, data
@@ -227,12 +251,7 @@ func IVDetectionDiscoveryPayload(prefix, kind string) (string, []byte) {
 		JSONAttributesTopic:    prefix + "/iv/" + kind + "/state",
 		Availability:           cameraAvailability(prefix),
 		JSONAttributesTemplate: "{\"confidence\": {{ value_json.confidence }}, \"object_id\": \"{{ value_json.object_id }}\"}",
-		Device: haDevice{
-			Identifiers:  []string{"openqiara_camera"},
-			Name:         "OpenQiara Caméra",
-			Manufacturer: "Qiara/Cofidur",
-			Model:        "HOMELABCAM",
-		},
+		Device:                 cameraDevice(),
 	}
 	data, _ := json.Marshal(payload)
 	return topic, data

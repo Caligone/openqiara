@@ -7,7 +7,8 @@ type discoveryPayload struct {
 	DeviceClass            string `json:"device_class,omitempty"`
 	StateTopic             string `json:"state_topic"`
 	CommandTopic           string `json:"command_topic,omitempty"`
-	ValueTemplate          string `json:"value_template"`
+	ValueTemplate          string `json:"value_template,omitempty"`
+	StateValueTemplate     string `json:"state_value_template,omitempty"` // siren: HA's MQTT siren has no value_template
 	PayloadOn              string `json:"payload_on,omitempty"`
 	PayloadOff             string `json:"payload_off,omitempty"`
 	JSONAttributesTopic    string `json:"json_attributes_topic,omitempty"`
@@ -35,6 +36,10 @@ type haDevice struct {
 	Name         string   `json:"name"`
 	Manufacturer string   `json:"manufacturer"`
 	Model        string   `json:"model"`
+	// Left out when empty, so that the payloads of the existing entities
+	// stay as they were.
+	SWVersion string `json:"sw_version,omitempty"`
+	ViaDevice string `json:"via_device,omitempty"`
 }
 
 // dwsState is the MQTT state payload for a door/window sensor.

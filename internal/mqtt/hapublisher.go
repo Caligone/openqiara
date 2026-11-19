@@ -229,6 +229,12 @@ func (p *HAPublisher) republishDiscovery(ctx context.Context) {
 	if err := p.publish(ctx, statusTopic(p.prefix), []byte(statusOnline), retained); err != nil {
 		p.log.Warn("status publish failed", "error", err)
 	}
+	// The camera first: the sensors point at its device (via_device).
+	shutterTopic, shutterPayload := ShutterDiscoveryPayload(p.prefix)
+	if err := p.publish(ctx, shutterTopic, shutterPayload, retained); err != nil {
+		p.log.Warn("shutter discovery failed", "error", err)
+	}
+
 	for _, s := range p.sensors {
 		if err := p.publishDiscovery(ctx, s); err != nil {
 			p.log.Warn("discovery publish failed", "sensor_id", s.ID, "error", err)
@@ -242,11 +248,6 @@ func (p *HAPublisher) republishDiscovery(ctx context.Context) {
 				p.log.Warn("extra discovery publish failed", "topic", extra.Topic, "error", err)
 			}
 		}
-	}
-
-	shutterTopic, shutterPayload := ShutterDiscoveryPayload(p.prefix)
-	if err := p.publish(ctx, shutterTopic, shutterPayload, retained); err != nil {
-		p.log.Warn("shutter discovery failed", "error", err)
 	}
 }
 
