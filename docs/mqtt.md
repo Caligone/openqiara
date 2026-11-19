@@ -173,7 +173,8 @@ Quand `alarm.mode = "alarmo"` :
 (heartbeat toutes les ~12 h). Une porte dont la pile est morte est donc
 signalée au plus tard le lendemain.
 
-Pour chaque capteur, une entité batterie et une entité température :
+Pour chaque capteur, une entité batterie, et une entité température créée
+au premier relevé (un capteur qui n'en envoie jamais n'en a pas) :
 ```
 homeassistant/sensor/openqiara_<ID>_battery/config
 homeassistant/sensor/openqiara_<ID>_temperature/config
@@ -181,8 +182,8 @@ homeassistant/sensor/openqiara_<ID>_temperature/config
 
 La batterie est en pourcentage, calculé comme fbxhome le faisait à partir
 du niveau que le capteur envoie dans ses heartbeats. Les capteurs envoient
-leur température d'eux-mêmes, rarement : l'entité reste « inconnue »
-jusqu'au premier envoi, puis la dernière valeur est gardée même après un
+leur température d'eux-mêmes, rarement : l'entité n'existe pas avant le
+premier envoi, puis la dernière valeur est gardée même après un
 redémarrage.
 
 ## Sync bidirectionnelle

@@ -112,7 +112,7 @@ func extrasAsView(t *testing.T, extras []ExtraDiscovery) []extrasView {
 }
 
 func TestDiscoverySnapshot_ExtraTopics_DWS(t *testing.T) {
-	extras := BuildExtraDiscoveryTopics("openqiara", camera.Sensor{ID: 14, Type: "DWS"})
+	extras := BuildExtraDiscoveryTopics("openqiara", camera.Sensor{ID: 14, Type: "DWS", Temperature: new(21)})
 	snapshotTest(t, "discovery_extras_dws", extrasAsView(t, extras))
 }
 

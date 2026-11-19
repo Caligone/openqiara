@@ -168,25 +168,33 @@ func buildExtraDiscoveryTopics(prefix string, sensor camera.Sensor) []struct {
 		},
 	})
 
-	// Temperature sensor: unknown until the sensor sends one.
-	extras = append(extras, struct {
-		Topic   string
-		Payload discoveryPayload
-	}{
-		Topic: fmt.Sprintf("homeassistant/sensor/openqiara_%d_temperature/config", sensor.ID),
-		Payload: discoveryPayload{
-			Name:                "Température",
-			UniqueID:            fmt.Sprintf("openqiara_%s_%d_temperature", typeLower, sensor.ID),
-			DeviceClass:         "temperature",
-			UnitOfMeasurement:   "°C",
-			StateTopic:          st,
-			ValueTemplate:       "{{ value_json.temperature if value_json.temperature is defined else None }}",
-			JSONAttributesTopic: st,
-			Device:              device,
-		},
-	})
+	// Temperature sensor: only for a sensor that has sent one. The motion
+	// detector and the keypad may never, and an entity that stays unknown for
+	// good is noise: PublishState creates it with the first reading.
+	if sensor.Temperature != nil {
+		topic, payload := temperatureDiscovery(prefix, sensor)
+		extras = append(extras, struct {
+			Topic   string
+			Payload discoveryPayload
+		}{Topic: topic, Payload: payload})
+	}
 
 	return extras
+}
+
+// temperatureDiscovery is the temperature entity of a sensor that reports one.
+func temperatureDiscovery(prefix string, sensor camera.Sensor) (string, discoveryPayload) {
+	st := stateTopic(prefix, sensor.ID)
+	return fmt.Sprintf("homeassistant/sensor/openqiara_%d_temperature/config", sensor.ID), discoveryPayload{
+		Name:                "Température",
+		UniqueID:            fmt.Sprintf("openqiara_%s_%d_temperature", strings.ToLower(sensor.Type), sensor.ID),
+		DeviceClass:         "temperature",
+		UnitOfMeasurement:   "°C",
+		StateTopic:          st,
+		ValueTemplate:       "{{ value_json.temperature if value_json.temperature is defined else None }}",
+		JSONAttributesTopic: st,
+		Device:              sensorDevice(sensor),
+	}
 }
 
 func modelForType(sensorType string) string {
