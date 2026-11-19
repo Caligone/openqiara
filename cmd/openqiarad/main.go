@@ -170,6 +170,7 @@ func main() {
 		if mqttCfg.TopicPrefix == "" {
 			mqttCfg.TopicPrefix = "openqiara"
 		}
+		mqtt.SetCameraVersion(BuildInfo())
 		mqttPub = publisher.NewMQTTPublisher(mqttCfg, logger)
 		// In alarmo mode, don't publish our own alarm_control_panel entity —
 		// Alarmo is the source of truth for the alarm state in HA.
@@ -286,6 +287,9 @@ func main() {
 			Listen: listen,
 			Path:   cfg.RTSP.Path,
 			Audio:  true,
+			// Next to the alarm state, on /data, so DESCRIBE has the
+			// parameter sets right after a reboot.
+			ParamsFile: "/data/openqiara_rtsp_h264_params",
 		}, mediaHub, logger)
 		if err := rtspSrv.Start(ctx); err != nil {
 			logger.Error("failed to start RTSP server", "error", err)
@@ -717,13 +721,14 @@ func webSrvSetAlarm(state string, pubs []publisher.Publisher, ctx context.Contex
 }
 
 // republishSensorStates pushes the sensors' live state on an MQTT
-// (re)connect. A keypad has no state; nor does a door or motion sensor
-// before its first report since the start: the state retained for it on
-// the broker, which Home Assistant reads back after its own restart,
-// stays.
+// (re)connect. A door or motion sensor before its first report since the
+// start has no state: the one retained for it on the broker, which Home
+// Assistant reads back after its own restart, stays. A keypad has no state of
+// its own, only its battery, reachability and temperature: always republished,
+// or Home Assistant shows them unknown until the battery level changes.
 func republishSensorStates(ctx context.Context, sensors []camera.Sensor, publish func(context.Context, camera.Sensor) error, logger *slog.Logger) {
 	for _, s := range sensors {
-		if s.Type == "KPD" || !s.StateKnown() {
+		if s.Type != "KPD" && !s.StateKnown() {
 			continue
 		}
 		if err := publish(ctx, s); err != nil {

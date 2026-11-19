@@ -64,6 +64,25 @@ refuse (`400`) un broker sans schéma TLS quand des `tls_*` sont configurés.
 
 OpenQiara publie des configs auto-discovery sur les topics `homeassistant/...` au démarrage.
 
+### Disponibilité de la caméra
+
+`<prefix>/status` vaut `online` (retenu) à chaque connexion au broker et
+`offline` quand la caméra tombe sans prévenir (dernière volonté / LWT : Wi-Fi
+perdu, coupure de courant) ou s'arrête proprement. Les entités de la caméra
+(volet, détection humain/animal) l'utilisent comme `availability` : elles
+passent « indisponibles » quand la caméra n'est plus sur le broker.
+
+Les capteurs d'alarme (DWS, PIR, SRN et leurs batterie/température) **n'ont
+pas** de `availability`, volontairement : un broker qui tousse ne doit pas les
+rendre indisponibles dans Alarmo.
+
+### Device
+
+Les capteurs sont des devices reliés à la caméra (`via_device: openqiara_camera`),
+et le device de la caméra porte `sw_version` (la version d'openqiarad). Les
+entités batterie et température d'un capteur s'appellent `Batterie` et
+`Température` : Home Assistant préfixe lui-même le nom du device.
+
 ### DWS (binary_sensor)
 
 ```
@@ -109,6 +128,9 @@ Command:   openqiara/siren/<ID>/set   (payload: "true"/"false" ou "ON"/"OFF")
 State:     openqiara/sensor/<ID>/state  {"active": false, "state": "armed", "battery": 81, "reachable": true}
 ```
 
+La sirène lit son état par `state_value_template` (l'entité MQTT `siren`
+ignore `value_template`).
+
 `active` est vrai quand la sirène hurle, quel que soit le déclencheur :
 openqiara, Alarmo, ou la sirène elle-même pendant une panne de la caméra.
 `state` (attribut) est l'état qu'elle rapporte : `off`, `test`,
@@ -151,7 +173,8 @@ Quand `alarm.mode = "alarmo"` :
 (heartbeat toutes les ~12 h). Une porte dont la pile est morte est donc
 signalée au plus tard le lendemain.
 
-Pour chaque capteur, une entité batterie et une entité température :
+Pour chaque capteur, une entité batterie, et une entité température créée
+au premier relevé (un capteur qui n'en envoie jamais n'en a pas) :
 ```
 homeassistant/sensor/openqiara_<ID>_battery/config
 homeassistant/sensor/openqiara_<ID>_temperature/config
@@ -159,8 +182,8 @@ homeassistant/sensor/openqiara_<ID>_temperature/config
 
 La batterie est en pourcentage, calculé comme fbxhome le faisait à partir
 du niveau que le capteur envoie dans ses heartbeats. Les capteurs envoient
-leur température d'eux-mêmes, rarement : l'entité reste « inconnue »
-jusqu'au premier envoi, puis la dernière valeur est gardée même après un
+leur température d'eux-mêmes, rarement : l'entité n'existe pas avant le
+premier envoi, puis la dernière valeur est gardée même après un
 redémarrage.
 
 ## Sync bidirectionnelle

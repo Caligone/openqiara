@@ -1,6 +1,7 @@
 package mqtt
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -236,4 +237,97 @@ func TestModelForType(t *testing.T) {
 // TestHAPublisher_ImplementsPublisher checks that HAPublisher satisfies the interface.
 func TestHAPublisher_ImplementsPublisher(t *testing.T) {
 	var _ Publisher = (*HAPublisher)(nil)
+}
+
+// The camera's own entities follow <prefix>/status; the alarm's sensors never
+// do (Alarmo would see them unavailable when the broker coughs).
+func TestAvailability_CameraEntitiesOnly(t *testing.T) {
+	_, shutter := ShutterDiscoveryPayload("openqiara")
+	_, iv := IVDetectionDiscoveryPayload("openqiara", "human")
+	for name, raw := range map[string][]byte{"shutter": shutter, "iv": iv} {
+		var m struct {
+			Availability []availabilityItem `json:"availability"`
+		}
+		if err := json.Unmarshal(raw, &m); err != nil {
+			t.Fatal(err)
+		}
+		want := availabilityItem{Topic: "openqiara/status", PayloadAvailable: "online", PayloadNotAvailable: "offline"}
+		if len(m.Availability) != 1 || m.Availability[0] != want {
+			t.Errorf("%s: availability = %+v, want [%+v]", name, m.Availability, want)
+		}
+	}
+
+	for _, typ := range []string{"DWS", "PIR", "SRN"} {
+		s := camera.Sensor{ID: 1, Type: typ}
+		p, _ := buildDiscoveryPayload("openqiara", s)
+		if p.Availability != nil {
+			t.Errorf("%s: alarm sensor must have no availability", typ)
+		}
+		for _, e := range buildExtraDiscoveryTopics("openqiara", s) {
+			if e.Payload.Availability != nil {
+				t.Errorf("%s: extra %s must have no availability", typ, e.Topic)
+			}
+		}
+	}
+}
+
+func TestDiscoveryMetadata(t *testing.T) {
+	SetCameraVersion("1.2.3")
+	t.Cleanup(func() { SetCameraVersion("") })
+
+	// The siren reads its state through state_value_template only.
+	srn, _ := buildDiscoveryPayload("openqiara", camera.Sensor{ID: 1, Type: "SRN"})
+	if srn.StateValueTemplate == "" || srn.ValueTemplate != "" {
+		t.Errorf("siren templates: state=%q value=%q", srn.StateValueTemplate, srn.ValueTemplate)
+	}
+
+	// The sensors hang off the camera, whose device carries the version.
+	dws, _ := buildDiscoveryPayload("openqiara", camera.Sensor{ID: 2, Type: "DWS"})
+	if dws.Device.ViaDevice != cameraDeviceID || cameraDevice().SWVersion != "1.2.3" {
+		t.Errorf("via_device=%q sw_version=%q", dws.Device.ViaDevice, cameraDevice().SWVersion)
+	}
+
+	// Entities are named by what they are: HA prepends the device name.
+	for _, e := range buildExtraDiscoveryTopics("openqiara", camera.Sensor{ID: 2, Type: "DWS", Label: "Porte"}) {
+		if n := e.Payload.Name; n != "Batterie" && n != "Température" {
+			t.Errorf("extra %s named %q", e.Topic, n)
+		}
+	}
+}
+
+// The temperature entity is created with the sensor's first reading, before
+// the state that feeds it, and rediscovered on reconnect even though the
+// sensor list taken at the start knows no temperature.
+func TestTemperatureEntityCreatedAtFirstReading(t *testing.T) {
+	p, c := newRecordingPublisher()
+	p.prefix = "openqiara"
+	s := camera.Sensor{ID: 20, Type: "PIR"}
+	p.sensors = []camera.Sensor{s}
+	tempTopic := "homeassistant/sensor/openqiara_20_temperature/config"
+	has := func(topic string) bool {
+		for _, m := range c.published {
+			if m.topic == topic {
+				return true
+			}
+		}
+		return false
+	}
+
+	_ = p.PublishState(context.Background(), s)
+	if has(tempTopic) {
+		t.Fatal("temperature entity created without a reading")
+	}
+
+	s.Temperature = new(21)
+	_ = p.PublishState(context.Background(), s)
+	if n := len(c.published); n != 3 || c.published[1].topic != tempTopic {
+		t.Fatalf("want entity then state, got %+v", c.published)
+	}
+	_ = p.PublishState(context.Background(), s) // already known: no new discovery
+
+	c.published = nil
+	p.republishDiscovery(context.Background())
+	if !has(tempTopic) {
+		t.Error("temperature entity not rediscovered on reconnect")
+	}
 }

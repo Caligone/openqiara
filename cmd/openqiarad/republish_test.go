@@ -12,7 +12,8 @@ import (
 
 // TestRepublishSensorStatesKeepsUnreportedState: on an MQTT (re)connect, a
 // door or motion sensor not heard since the start is left out, so that its
-// retained state, open included, is not overwritten as closed.
+// retained state, open included, is not overwritten as closed. A keypad is
+// always republished: its battery and reachability have no other source.
 func TestRepublishSensorStatesKeepsUnreportedState(t *testing.T) {
 	sensors := []camera.Sensor{
 		{ID: 46, Type: "DWS"}, // open before the restart, silent since
@@ -27,7 +28,7 @@ func TestRepublishSensorStatesKeepsUnreportedState(t *testing.T) {
 		return nil
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
-	if want := []int{52, 29}; !slices.Equal(published, want) {
+	if want := []int{52, 29, 31}; !slices.Equal(published, want) {
 		t.Errorf("published %v, want %v", published, want)
 	}
 }

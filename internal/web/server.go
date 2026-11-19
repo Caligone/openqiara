@@ -402,8 +402,17 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 // --- Middleware ---
 
+// maxBodyBytes bounds a request body: the largest legitimate one (a
+// configuration) is a few kilobytes, and the camera has 128 MB of RAM with
+// no swap. Past the limit the JSON decoder fails and the handler answers
+// 400. No route receives an upload: the OTA binary is fetched by the daemon.
+const maxBodyBytes = 64 << 10
+
 func (s *Server) cors(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+		}
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")

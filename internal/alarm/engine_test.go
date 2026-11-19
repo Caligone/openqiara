@@ -188,15 +188,39 @@ func TestWhatIsIgnored(t *testing.T) {
 	expect(t, e, siren, StatePending, "entry delay")
 }
 
-// TestModeSwitchSeesSensorsInAlarm: from night to away, a sensor in alarm
-// that night left out now starts the entry delay.
+// TestModeSwitchSeesSensorsInAlarm: from night to away, a door open that
+// night left out now starts the entry delay.
 func TestModeSwitchSeesSensorsInAlarm(t *testing.T) {
-	e, siren := newTestEngine(t, map[int]SensorConfig{17: {NightAllowed: true}})
+	e, siren := newTestEngine(t, map[int]SensorConfig{23: {NightAllowed: true}})
 	e.HandleCommand("arm_night", SourceRemote)
-	e.HandleSensorEvent(17, "PIR", true)
+	e.HandleSensorEvent(23, "DWS", true)
 	expect(t, e, siren, StateArmedNight, "arm night")
 	e.HandleCommand("arm_away", SourceRemote)
 	expect(t, e, siren, StatePending, "arm", "entry delay")
+}
+
+// TestExitPastMotionSensor: leaving walks past a PIR during the exit
+// delay; its motion, still reported when the delay ends, sets nothing off.
+func TestExitPastMotionSensor(t *testing.T) {
+	e, siren := newTestEngine(t, nil)
+	e.HandleCommand("arm_away", SourceLocal)
+	e.HandleSensorEvent(17, "PIR", true)
+	e.HandleSensorEvent(23, "DWS", true)
+	e.HandleSensorEvent(23, "DWS", false)
+	siren.take()
+	e.HandleSirenState(SirenArmed)
+	expect(t, e, siren, StateArmedAway)
+}
+
+// TestExitDoorLeftOpen: a door still open when the exit delay ends starts
+// the entry delay.
+func TestExitDoorLeftOpen(t *testing.T) {
+	e, siren := newTestEngine(t, nil)
+	e.HandleCommand("arm_away", SourceLocal)
+	e.HandleSensorEvent(23, "DWS", true)
+	siren.take()
+	e.HandleSirenState(SirenArmed)
+	expect(t, e, siren, StatePending, "entry delay")
 }
 
 // TestLoadUnreadable: a state file that cannot be read starts disarmed,

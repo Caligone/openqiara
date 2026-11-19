@@ -3,7 +3,7 @@
   "unique_id": "openqiara_srn_32",
   "state_topic": "openqiara/sensor/32/state",
   "command_topic": "openqiara/siren/32/set",
-  "value_template": "{{ value_json.active | lower }}",
+  "state_value_template": "{{ value_json.active | lower }}",
   "payload_on": "true",
   "payload_off": "false",
   "json_attributes_topic": "openqiara/sensor/32/state",
@@ -14,6 +14,7 @@
     ],
     "name": "Sirène",
     "manufacturer": "Qiara/Cofidur",
-    "model": "HOMELABSRN"
+    "model": "HOMELABSRN",
+    "via_device": "openqiara_camera"
   }
 }

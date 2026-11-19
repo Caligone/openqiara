@@ -5,10 +5,17 @@
 package rtspserver
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
+	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/bluenviron/gortsplib/v5"
 	"github.com/bluenviron/gortsplib/v5/pkg/base"
@@ -49,6 +56,12 @@ type Config struct {
 	// Audio adds the microphone, when the hub carries it (multicast
 	// source) and libfdk-aac is at hand.
 	Audio bool
+	// ParamsFile, when set, persists the last SPS/PPS seen on the stream
+	// so that DESCRIBE advertises them (sprop-parameter-sets,
+	// profile-level-id) even before the pipeline starts. Without them some
+	// clients (go2rtc → MSE players) guess the picture size and show it
+	// in 4:3.
+	ParamsFile string
 }
 
 // The microphone as RTSP serves it: AAC-LC 16 kHz mono, one 64 ms access
@@ -67,6 +80,9 @@ type Server struct {
 	hub  *mediahub.Hub
 	rsrv *gortsplib.Server
 
+	// mu also guards forma's SPS/PPS: they are the last parameter sets
+	// seen, re-emitted before each IDR for mid-GOP joiners and advertised
+	// in DESCRIBE.
 	mu       sync.Mutex
 	stream   *gortsplib.ServerStream
 	forma    *format.H264
@@ -79,11 +95,16 @@ type Server struct {
 	// server's lifetime so all readers share a consistent timeline.
 	randomStart uint32
 
-	// sps/pps are cached from the stream so we can re-emit them before
-	// each IDR for clients that joined mid-GOP.
-	sps []byte
-	pps []byte
+	// dropped counts the packets dropped for slow readers since the last
+	// summary, logged at most every dropLogEvery.
+	dropped    atomic.Int64
+	dropMu     sync.Mutex
+	dropLogged time.Time
 }
+
+// dropLogEvery rate-limits the dropped packets summary: a slow reader
+// drops hundreds of packets per second.
+const dropLogEvery = 10 * time.Second
 
 // New returns an RTSP server. The hub is the shared media pipeline the
 // server subscribes to on the first reader; if nil, New panics — the RTSP
@@ -110,10 +131,15 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// H.264 format with a dynamic payload type. The camera emits SPS/PPS
 	// in-band, so clients pick up parameter sets before the first IDR; we
-	// also re-emit them ourselves ahead of each IDR (see writeAU).
+	// also re-emit them ourselves ahead of each IDR (see writeAU), and
+	// advertise the last ones persisted until the stream shows its own.
 	s.forma = &format.H264{
 		PayloadTyp:        96,
 		PacketizationMode: 1,
+	}
+	if sps, pps, ok := loadParams(s.cfg.ParamsFile); ok {
+		s.forma.SPS, s.forma.PPS = sps, pps
+		s.log.Info("rtsp: parameter sets restored for DESCRIBE", "file", s.cfg.ParamsFile)
 	}
 	medi := &description.Media{
 		Type:    description.MediaTypeVideo,
@@ -141,6 +167,12 @@ func (s *Server) Start(ctx context.Context) error {
 	s.rsrv = &gortsplib.Server{
 		Handler:     s,
 		RTSPAddress: s.cfg.Listen,
+		// Per-client write queue, in RTP packets (a power of two). The
+		// default 256 is ~0.6 s at 4 Mbit/s and overflows on any dip of the
+		// camera's 2.4 GHz Wi-Fi: packets are dropped and the picture stays
+		// corrupted until the next key frame. 2048 absorbs ~5 s of dip, for
+		// ~3 MB used only while a client lags.
+		WriteQueueSize: 2048,
 	}
 	if err := s.rsrv.Start(); err != nil {
 		return fmt.Errorf("rtsp listen %s: %w", s.cfg.Listen, err)
@@ -155,6 +187,21 @@ func (s *Server) Start(ctx context.Context) error {
 }
 
 // --- gortsplib.ServerHandler ---
+
+// OnStreamWriteError implements gortsplib.ServerHandlerOnStreamWriteError,
+// called for each packet dropped because a reader's write queue is full.
+// Without it gortsplib logs every single one, hundreds per second on a slow
+// Wi-Fi link: count them and log a summary instead.
+func (s *Server) OnStreamWriteError(ctx *gortsplib.ServerHandlerOnStreamWriteErrorCtx) {
+	s.dropped.Add(1)
+	s.dropMu.Lock()
+	defer s.dropMu.Unlock()
+	if time.Since(s.dropLogged) < dropLogEvery {
+		return
+	}
+	s.dropLogged = time.Now()
+	s.log.Warn("rtsp: reader too slow, packets dropped", "dropped", s.dropped.Swap(0), "error", ctx.Error)
+}
 
 // OnConnOpen implements gortsplib.ServerHandlerOnConnOpen.
 func (s *Server) OnConnOpen(_ *gortsplib.ServerHandlerOnConnOpenCtx) {}
@@ -323,25 +370,25 @@ func (s *Server) runPipeline(ctx context.Context) {
 // readers.
 func (s *Server) writeAU(enc *rtph264.Encoder, au [][]byte, pts90khz int64) {
 	hasIDR := false
+	var sps, pps []byte
 	for _, nal := range au {
 		switch nalType(nal) {
 		case nalTypeSPS:
-			s.mu.Lock()
-			s.sps = append(s.sps[:0], nal...)
-			s.mu.Unlock()
+			sps = nal
 		case nalTypePPS:
-			s.mu.Lock()
-			s.pps = append(s.pps[:0], nal...)
-			s.mu.Unlock()
+			pps = nal
 		case nalTypeIDR:
 			hasIDR = true
 		}
+	}
+	if sps != nil || pps != nil {
+		s.updateParams(sps, pps)
 	}
 
 	out := au
 	if hasIDR {
 		s.mu.Lock()
-		sps, pps := s.sps, s.pps
+		sps, pps := s.forma.SPS, s.forma.PPS
 		s.mu.Unlock()
 		if len(sps) > 0 && len(pps) > 0 && !auHasParams(au) {
 			out = append([][]byte{sps, pps}, au...)
@@ -367,6 +414,81 @@ func (s *Server) writeAU(enc *rtph264.Encoder, au [][]byte, pts90khz int64) {
 			return
 		}
 	}
+}
+
+// updateParams caches the parameter sets seen in an access unit (nil: not
+// in it). When they change, it advertises them to future DESCRIBE requests
+// and persists them for the next start. The slices stored are fresh copies,
+// never mutated afterwards: the stream's description shares them.
+func (s *Server) updateParams(sps, pps []byte) {
+	s.mu.Lock()
+	changed := false
+	if sps != nil && !bytes.Equal(sps, s.forma.SPS) {
+		s.forma.SPS, changed = bytes.Clone(sps), true
+	}
+	if pps != nil && !bytes.Equal(pps, s.forma.PPS) {
+		s.forma.PPS, changed = bytes.Clone(pps), true
+	}
+	sps, pps, st := s.forma.SPS, s.forma.PPS, s.stream
+	s.mu.Unlock()
+	if !changed || sps == nil || pps == nil {
+		return
+	}
+	if st != nil {
+		st.ReloadDesc()
+	}
+	s.log.Info("rtsp: parameter sets updated for DESCRIBE", "profile_level_id", s.forma.FMTP()["profile-level-id"])
+	if err := saveParams(s.cfg.ParamsFile, sps, pps); err != nil {
+		s.log.Warn("rtsp: persist parameter sets", "error", err)
+	}
+}
+
+// loadParams reads the SPS/PPS saveParams wrote: two base64 lines.
+func loadParams(path string) (sps, pps []byte, ok bool) {
+	if path == "" {
+		return nil, nil, false
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, nil, false
+	}
+	lines := strings.Fields(string(b))
+	if len(lines) != 2 {
+		return nil, nil, false
+	}
+	sps, err1 := base64.StdEncoding.DecodeString(lines[0])
+	pps, err2 := base64.StdEncoding.DecodeString(lines[1])
+	if err1 != nil || err2 != nil || len(sps) < 4 || nalType(sps) != nalTypeSPS || nalType(pps) != nalTypePPS {
+		return nil, nil, false
+	}
+	return sps, pps, true
+}
+
+// saveParams writes SPS/PPS as two base64 lines, atomically: a temporary
+// file in the same directory, flushed, then renamed over the previous one
+// (same pattern as config.Store.save), so a power cut leaves the old sets
+// or the new ones, never a truncated file.
+func saveParams(path string, sps, pps []byte) error {
+	if path == "" {
+		return nil
+	}
+	data := base64.StdEncoding.EncodeToString(sps) + "\n" + base64.StdEncoding.EncodeToString(pps) + "\n"
+	tmp := path + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err == nil {
+		_, err = f.WriteString(data)
+		if err == nil {
+			err = f.Sync()
+		}
+		err = errors.Join(err, f.Close())
+	}
+	if err == nil {
+		err = os.Rename(tmp, path)
+	}
+	if err != nil {
+		_ = os.Remove(tmp)
+	}
+	return err
 }
 
 // auHasParams reports whether the access unit already carries SPS and PPS

@@ -23,6 +23,11 @@ const (
 	MulticastJPEG      = 9610
 )
 
+// maxFrameSize bounds a frame a fragment header announces: the assembler
+// allocates total_size bytes, and a corrupt header must not ask for 4 GB on
+// a camera with 128 MB of RAM.
+const maxFrameSize = 8 << 20
+
 // multicastHeader is the 24-byte header before each fragment (packed,
 // little-endian): ts u64 (µs), flags u8 (bit 2 keyframe), n/m u8 (fragment
 // number, 1-based, low nibble; fragment count, high nibble), seqno u32,
@@ -50,6 +55,9 @@ func parseMulticastFragment(p []byte) (multicastFragment, error) {
 	size := int(binary.LittleEndian.Uint16(p[22:]))
 	if multicastHeader+size > len(p) || uint64(f.offset)+uint64(size) > uint64(f.total) {
 		return multicastFragment{}, fmt.Errorf("fragment out of bounds (seq %d)", f.seqno)
+	}
+	if f.total > maxFrameSize {
+		return multicastFragment{}, fmt.Errorf("frame too large (%d bytes, seq %d)", f.total, f.seqno)
 	}
 	f.data = p[multicastHeader : multicastHeader+size]
 	return f, nil
