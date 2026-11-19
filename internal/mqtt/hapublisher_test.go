@@ -237,3 +237,35 @@ func TestModelForType(t *testing.T) {
 func TestHAPublisher_ImplementsPublisher(t *testing.T) {
 	var _ Publisher = (*HAPublisher)(nil)
 }
+
+// The camera's own entities follow <prefix>/status; the alarm's sensors never
+// do (Alarmo would see them unavailable when the broker coughs).
+func TestAvailability_CameraEntitiesOnly(t *testing.T) {
+	_, shutter := ShutterDiscoveryPayload("openqiara")
+	_, iv := IVDetectionDiscoveryPayload("openqiara", "human")
+	for name, raw := range map[string][]byte{"shutter": shutter, "iv": iv} {
+		var m struct {
+			Availability []availabilityItem `json:"availability"`
+		}
+		if err := json.Unmarshal(raw, &m); err != nil {
+			t.Fatal(err)
+		}
+		want := availabilityItem{Topic: "openqiara/status", PayloadAvailable: "online", PayloadNotAvailable: "offline"}
+		if len(m.Availability) != 1 || m.Availability[0] != want {
+			t.Errorf("%s: availability = %+v, want [%+v]", name, m.Availability, want)
+		}
+	}
+
+	for _, typ := range []string{"DWS", "PIR", "SRN"} {
+		s := camera.Sensor{ID: 1, Type: typ}
+		p, _ := buildDiscoveryPayload("openqiara", s)
+		if p.Availability != nil {
+			t.Errorf("%s: alarm sensor must have no availability", typ)
+		}
+		for _, e := range buildExtraDiscoveryTopics("openqiara", s) {
+			if e.Payload.Availability != nil {
+				t.Errorf("%s: extra %s must have no availability", typ, e.Topic)
+			}
+		}
+	}
+}

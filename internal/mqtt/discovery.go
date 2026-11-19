@@ -191,6 +191,7 @@ func ShutterDiscoveryPayload(prefix string) (string, []byte) {
 		ValueTemplate: "{{ value_json.state }}",
 		PayloadOn:     "open",
 		PayloadOff:    "closed",
+		Availability:  cameraAvailability(prefix),
 		Device: haDevice{
 			Identifiers:  []string{"openqiara_camera"},
 			Name:         "OpenQiara Caméra",
@@ -224,6 +225,7 @@ func IVDetectionDiscoveryPayload(prefix, kind string) (string, []byte) {
 		PayloadOn:              "true",
 		PayloadOff:             "false",
 		JSONAttributesTopic:    prefix + "/iv/" + kind + "/state",
+		Availability:           cameraAvailability(prefix),
 		JSONAttributesTemplate: "{\"confidence\": {{ value_json.confidence }}, \"object_id\": \"{{ value_json.object_id }}\"}",
 		Device: haDevice{
 			Identifiers:  []string{"openqiara_camera"},
