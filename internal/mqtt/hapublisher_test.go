@@ -269,3 +269,27 @@ func TestAvailability_CameraEntitiesOnly(t *testing.T) {
 		}
 	}
 }
+
+func TestDiscoveryMetadata(t *testing.T) {
+	SetCameraVersion("1.2.3")
+	t.Cleanup(func() { SetCameraVersion("") })
+
+	// The siren reads its state through state_value_template only.
+	srn, _ := buildDiscoveryPayload("openqiara", camera.Sensor{ID: 1, Type: "SRN"})
+	if srn.StateValueTemplate == "" || srn.ValueTemplate != "" {
+		t.Errorf("siren templates: state=%q value=%q", srn.StateValueTemplate, srn.ValueTemplate)
+	}
+
+	// The sensors hang off the camera, whose device carries the version.
+	dws, _ := buildDiscoveryPayload("openqiara", camera.Sensor{ID: 2, Type: "DWS"})
+	if dws.Device.ViaDevice != cameraDeviceID || cameraDevice().SWVersion != "1.2.3" {
+		t.Errorf("via_device=%q sw_version=%q", dws.Device.ViaDevice, cameraDevice().SWVersion)
+	}
+
+	// Entities are named by what they are: HA prepends the device name.
+	for _, e := range buildExtraDiscoveryTopics("openqiara", camera.Sensor{ID: 2, Type: "DWS", Label: "Porte"}) {
+		if n := e.Payload.Name; n != "Batterie" && n != "Température" {
+			t.Errorf("extra %s named %q", e.Topic, n)
+		}
+	}
+}

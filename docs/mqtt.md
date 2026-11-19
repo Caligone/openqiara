@@ -76,6 +76,13 @@ Les capteurs d'alarme (DWS, PIR, SRN et leurs batterie/température) **n'ont
 pas** de `availability`, volontairement : un broker qui tousse ne doit pas les
 rendre indisponibles dans Alarmo.
 
+### Device
+
+Les capteurs sont des devices reliés à la caméra (`via_device: openqiara_camera`),
+et le device de la caméra porte `sw_version` (la version d'openqiarad). Les
+entités batterie et température d'un capteur s'appellent `Batterie` et
+`Température` : Home Assistant préfixe lui-même le nom du device.
+
 ### DWS (binary_sensor)
 
 ```
@@ -120,6 +127,9 @@ Topic:     homeassistant/siren/openqiara_<ID>/config
 Command:   openqiara/siren/<ID>/set   (payload: "true"/"false" ou "ON"/"OFF")
 State:     openqiara/sensor/<ID>/state  {"active": false, "state": "armed", "battery": 81, "reachable": true}
 ```
+
+La sirène lit son état par `state_value_template` (l'entité MQTT `siren`
+ignore `value_template`).
 
 `active` est vrai quand la sirène hurle, quel que soit le déclencheur :
 openqiara, Alarmo, ou la sirène elle-même pendant une panne de la caméra.

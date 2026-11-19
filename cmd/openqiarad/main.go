@@ -170,6 +170,7 @@ func main() {
 		if mqttCfg.TopicPrefix == "" {
 			mqttCfg.TopicPrefix = "openqiara"
 		}
+		mqtt.SetCameraVersion(BuildInfo())
 		mqttPub = publisher.NewMQTTPublisher(mqttCfg, logger)
 		// In alarmo mode, don't publish our own alarm_control_panel entity —
 		// Alarmo is the source of truth for the alarm state in HA.
