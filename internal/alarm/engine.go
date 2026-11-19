@@ -122,8 +122,10 @@ type Engine struct {
 	armingDelay  time.Duration
 	pendingDelay time.Duration
 
-	// lastAlarm is whether each sensor is in alarm (door open, motion), so
-	// that a sensor still in alarm when the exit delay ends sets it off.
+	// lastAlarm is whether each opening is open, so that a door still open
+	// when the exit delay ends sets it off. Motion is not kept: a PIR reports
+	// an event, and its motion end only closes a firmware window (~20 s),
+	// which the person leaving always opens during the exit delay.
 	lastAlarm map[int]bool
 
 	siren     Siren
@@ -318,7 +320,9 @@ func (e *Engine) HandleSensorEvent(sensorID int, sensorType string, inAlarm bool
 	if sensorType == "KPD" {
 		return // the keypad commands the alarm, it never sets it off
 	}
-	e.lastAlarm[sensorID] = inAlarm
+	if sensorType != "PIR" {
+		e.lastAlarm[sensorID] = inAlarm
+	}
 	if !inAlarm || !e.watchedLocked(sensorID) {
 		return
 	}
