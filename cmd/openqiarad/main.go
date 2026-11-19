@@ -286,6 +286,9 @@ func main() {
 			Listen: listen,
 			Path:   cfg.RTSP.Path,
 			Audio:  true,
+			// Next to the alarm state, on /data, so DESCRIBE has the
+			// parameter sets right after a reboot.
+			ParamsFile: "/data/openqiara_rtsp_h264_params",
 		}, mediaHub, logger)
 		if err := rtspSrv.Start(ctx); err != nil {
 			logger.Error("failed to start RTSP server", "error", err)
