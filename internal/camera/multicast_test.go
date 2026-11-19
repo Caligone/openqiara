@@ -71,6 +71,15 @@ func TestParseMulticastFragmentBounds(t *testing.T) {
 	if _, err := parseMulticastFragment(p[:10]); err == nil {
 		t.Fatal("short packet accepted")
 	}
+	q := fragments(1, 1, []byte{1, 2, 3}, 300)[0]
+	binary.LittleEndian.PutUint32(q[18:], 1<<30)
+	if _, err := parseMulticastFragment(q); err == nil {
+		t.Fatal("oversized frame accepted")
+	}
+	binary.LittleEndian.PutUint32(q[18:], maxFrameSize)
+	if _, err := parseMulticastFragment(q); err != nil {
+		t.Fatalf("frame at the limit refused: %v", err)
+	}
 }
 
 func TestReadMulticastVideo(t *testing.T) {

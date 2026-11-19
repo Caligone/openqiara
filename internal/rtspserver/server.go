@@ -167,6 +167,12 @@ func (s *Server) Start(ctx context.Context) error {
 	s.rsrv = &gortsplib.Server{
 		Handler:     s,
 		RTSPAddress: s.cfg.Listen,
+		// Per-client write queue, in RTP packets (a power of two). The
+		// default 256 is ~0.6 s at 4 Mbit/s and overflows on any dip of the
+		// camera's 2.4 GHz Wi-Fi: packets are dropped and the picture stays
+		// corrupted until the next key frame. 2048 absorbs ~5 s of dip, for
+		// ~3 MB used only while a client lags.
+		WriteQueueSize: 2048,
 	}
 	if err := s.rsrv.Start(); err != nil {
 		return fmt.Errorf("rtsp listen %s: %w", s.cfg.Listen, err)
