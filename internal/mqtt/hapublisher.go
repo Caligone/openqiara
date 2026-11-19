@@ -30,7 +30,21 @@ const (
 	// escape hatch for paho states that never fire ConnectionLostHandler.
 	watchdogInterval = 30 * time.Second
 	watchdogGrace    = 90 * time.Second
+
+	// <prefix>/status holds online from each connection, and offline by the
+	// broker's last will when the camera drops off the network (Wi-Fi lost,
+	// power cut) or by Close on a clean stop.
+	statusOnline  = "online"
+	statusOffline = "offline"
 )
+
+// statusTopic is where the camera says whether it is on the broker.
+func statusTopic(prefix string) string { return prefix + "/status" }
+
+// cameraAvailability makes an entity follow the camera's status topic.
+func cameraAvailability(prefix string) []availabilityItem {
+	return []availabilityItem{{Topic: statusTopic(prefix), PayloadAvailable: statusOnline, PayloadNotAvailable: statusOffline}}
+}
 
 // HAPublisher implements Publisher for Home Assistant MQTT auto-discovery.
 type HAPublisher struct {
@@ -92,6 +106,7 @@ func (p *HAPublisher) Connect(ctx context.Context, cfg Config, sensors []camera.
 	opts := mqtt.NewClientOptions().
 		AddBroker(cfg.Broker).
 		SetClientID("openqiara").
+		SetWill(statusTopic(prefix), statusOffline, qos, retained).
 		SetCleanSession(false).
 		SetAutoReconnect(true).
 		// ConnectRetry rearms reconnection even when the very first Connect()
@@ -211,6 +226,9 @@ func (p *HAPublisher) watchdog(ctx context.Context) {
 // republishDiscovery (re)publishes all retained discovery configs. Called from
 // OnConnectHandler, so it must NOT take p.mu (the lock may be held by Connect).
 func (p *HAPublisher) republishDiscovery(ctx context.Context) {
+	if err := p.publish(ctx, statusTopic(p.prefix), []byte(statusOnline), retained); err != nil {
+		p.log.Warn("status publish failed", "error", err)
+	}
 	for _, s := range p.sensors {
 		if err := p.publishDiscovery(ctx, s); err != nil {
 			p.log.Warn("discovery publish failed", "sensor_id", s.ID, "error", err)
@@ -466,6 +484,8 @@ func (p *HAPublisher) Close() error {
 	defer p.mu.Unlock()
 
 	if p.client != nil && p.client.IsConnected() {
+		// A clean DISCONNECT does not fire the last will: say it.
+		_ = p.publish(context.Background(), statusTopic(p.prefix), []byte(statusOffline), retained)
 		p.client.Disconnect(250)
 	}
 	return nil

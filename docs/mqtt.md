@@ -64,6 +64,18 @@ refuse (`400`) un broker sans schéma TLS quand des `tls_*` sont configurés.
 
 OpenQiara publie des configs auto-discovery sur les topics `homeassistant/...` au démarrage.
 
+### Disponibilité de la caméra
+
+`<prefix>/status` vaut `online` (retenu) à chaque connexion au broker et
+`offline` quand la caméra tombe sans prévenir (dernière volonté / LWT : Wi-Fi
+perdu, coupure de courant) ou s'arrête proprement. Les entités de la caméra
+(volet, détection humain/animal) l'utilisent comme `availability` : elles
+passent « indisponibles » quand la caméra n'est plus sur le broker.
+
+Les capteurs d'alarme (DWS, PIR, SRN et leurs batterie/température) **n'ont
+pas** de `availability`, volontairement : un broker qui tousse ne doit pas les
+rendre indisponibles dans Alarmo.
+
 ### DWS (binary_sensor)
 
 ```

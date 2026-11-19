@@ -7,6 +7,13 @@
     "value_template": "{{ value_json.state }}",
     "payload_on": "open",
     "payload_off": "closed",
+    "availability": [
+      {
+        "topic": "openqiara/status",
+        "payload_available": "online",
+        "payload_not_available": "offline"
+      }
+    ],
     "device": {
       "identifiers": [
         "openqiara_camera"

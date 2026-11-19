@@ -2,19 +2,31 @@ package mqtt
 
 // discoveryPayload is the HA MQTT auto-discovery config message.
 type discoveryPayload struct {
-	Name                   string   `json:"name"`
-	UniqueID               string   `json:"unique_id"`
-	DeviceClass            string   `json:"device_class,omitempty"`
-	StateTopic             string   `json:"state_topic"`
-	CommandTopic           string   `json:"command_topic,omitempty"`
-	ValueTemplate          string   `json:"value_template"`
-	PayloadOn              string   `json:"payload_on,omitempty"`
-	PayloadOff             string   `json:"payload_off,omitempty"`
-	JSONAttributesTopic    string   `json:"json_attributes_topic,omitempty"`
-	JSONAttributesTemplate string   `json:"json_attributes_template,omitempty"`
-	UnitOfMeasurement      string   `json:"unit_of_measurement,omitempty"`
-	EntityCategory         string   `json:"entity_category,omitempty"`
-	Device                 haDevice `json:"device"`
+	Name                   string `json:"name"`
+	UniqueID               string `json:"unique_id"`
+	DeviceClass            string `json:"device_class,omitempty"`
+	StateTopic             string `json:"state_topic"`
+	CommandTopic           string `json:"command_topic,omitempty"`
+	ValueTemplate          string `json:"value_template"`
+	PayloadOn              string `json:"payload_on,omitempty"`
+	PayloadOff             string `json:"payload_off,omitempty"`
+	JSONAttributesTopic    string `json:"json_attributes_topic,omitempty"`
+	JSONAttributesTemplate string `json:"json_attributes_template,omitempty"`
+	UnitOfMeasurement      string `json:"unit_of_measurement,omitempty"`
+	EntityCategory         string `json:"entity_category,omitempty"`
+	// Availability is left out for the alarm's sensors: a camera dropping off
+	// the network must not turn them "unavailable" under Alarmo. Set on the
+	// camera's own entities only.
+	Availability []availabilityItem `json:"availability,omitempty"`
+	Device       haDevice           `json:"device"`
+}
+
+// availabilityItem points an entity at the topic that says whether the camera
+// is on the broker.
+type availabilityItem struct {
+	Topic               string `json:"topic"`
+	PayloadAvailable    string `json:"payload_available"`
+	PayloadNotAvailable string `json:"payload_not_available"`
 }
 
 // haDevice is the device block in HA discovery config.
