@@ -63,7 +63,10 @@ func (c *shutterController) Handle(state string) {
 	}
 	c.run(func() {
 		if err := c.setShutter(c.ctx, set); err != nil {
-			c.log.Warn("shutter: following the alarm failed", "open", set, "state", state, "error", err)
+			// An error, not a warning: open, the alarm is set without
+			// image or detection; closed, the camera keeps filming while
+			// disarmed.
+			c.log.Error("shutter: following the alarm failed", "open", set, "state", state, "error", err)
 			return
 		}
 		c.log.Info("shutter follows the alarm", "open", set, "state", state)
