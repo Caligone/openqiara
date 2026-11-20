@@ -92,8 +92,8 @@ Le shutter est contrôlé via le canal charmux Shutter (port 8006).
 Avec l'option `alarm.shutter_follows_alarm` (onglet Config, « Cache
 objectif : suit l'alarme »), le cache s'ouvre quand l'alarme est armée et
 se ferme quand elle est désarmée. `hlcamd` tourne donc seulement quand la
-maison est sous surveillance : cache fermé, il passe d'environ 85 % d'un
-cœur à 5 % (#50).
+maison est sous surveillance : cache fermé, il passe d'environ 68 % d'un
+cœur à 5 % (mesuré le 2026-11-19 sur rc.25, #50).
 
 - Ouvert dès le délai de sortie, pour que `hlcamd` ait repris avant la fin
   du délai ; dans tous les modes armés, nuit compris (et `armed_home`,
