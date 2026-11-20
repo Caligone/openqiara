@@ -90,6 +90,13 @@ type AlarmConfig struct {
 	// WailDurationSeconds is how long the alert lasts, counted by the siren
 	// in 2 s steps, 510 s at most (default 300 s). 0 means "use default".
 	WailDurationSeconds int `json:"wail_duration_seconds,omitempty"`
+
+	// ShutterFollows has the privacy shutter follow the alarm: "all" opens
+	// it in every armed mode, "away" only away (and Alarmo's vacation), both
+	// on an alarm set off too, and closes it once disarmed: hlcamd's streams
+	// pause with it. Only those changes move it, a shutter moved by hand
+	// stays so until the next one. "none" (default) leaves it alone.
+	ShutterFollows string `json:"shutter_follows,omitempty"`
 }
 
 // Defaults for alarm timings, exposed so other packages don't redeclare them.
@@ -147,6 +154,17 @@ func (c Config) SirenSoundsMode() string {
 		return c.Alarm.SirenSounds
 	default:
 		return "all"
+	}
+}
+
+// ShutterFollowsMode returns alarm.shutter_follows with its default: "none"
+// for an empty or unknown value.
+func (c Config) ShutterFollowsMode() string {
+	switch c.Alarm.ShutterFollows {
+	case "away", "all":
+		return c.Alarm.ShutterFollows
+	default:
+		return "none"
 	}
 }
 

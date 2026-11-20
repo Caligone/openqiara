@@ -798,6 +798,7 @@ func (s *Server) alarmConfigPayload() map[string]any {
 		"arming_delay_seconds":  int(cfg.ArmingDelay().Seconds()),
 		"pending_delay_seconds": int(cfg.PendingDelay().Seconds()),
 		"wail_duration_seconds": int(cfg.WailDuration().Seconds()),
+		"shutter_follows":       cfg.ShutterFollowsMode(),
 	}
 }
 
@@ -810,6 +811,7 @@ func (s *Server) handleUpdateAlarm(w http.ResponseWriter, r *http.Request) {
 		ArmingDelaySeconds  *int    `json:"arming_delay_seconds,omitempty"`
 		PendingDelaySeconds *int    `json:"pending_delay_seconds,omitempty"`
 		WailDurationSeconds *int    `json:"wail_duration_seconds,omitempty"`
+		ShutterFollows      *string `json:"shutter_follows,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, "JSON invalide")
@@ -824,6 +826,12 @@ func (s *Server) handleUpdateAlarm(w http.ResponseWriter, r *http.Request) {
 	if body.SirenSounds != nil {
 		if *body.SirenSounds != "all" && *body.SirenSounds != "alarm_only" && *body.SirenSounds != "none" {
 			writeErr(w, http.StatusBadRequest, "siren_sounds invalide (all, alarm_only ou none)")
+			return
+		}
+	}
+	if body.ShutterFollows != nil {
+		if *body.ShutterFollows != "none" && *body.ShutterFollows != "away" && *body.ShutterFollows != "all" {
+			writeErr(w, http.StatusBadRequest, "shutter_follows invalide (none, away ou all)")
 			return
 		}
 	}
@@ -862,6 +870,9 @@ func (s *Server) handleUpdateAlarm(w http.ResponseWriter, r *http.Request) {
 		}
 		if body.WailDurationSeconds != nil {
 			cfg.Alarm.WailDurationSeconds = *body.WailDurationSeconds
+		}
+		if body.ShutterFollows != nil {
+			cfg.Alarm.ShutterFollows = *body.ShutterFollows
 		}
 	})
 	if err != nil {
