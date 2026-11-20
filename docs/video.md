@@ -89,21 +89,31 @@ Le shutter est contrôlé via le canal charmux Shutter (port 8006).
 
 ### Cache qui suit l'alarme
 
-Avec l'option `alarm.shutter_follows_alarm` (onglet Config, « Cache
-objectif : suit l'alarme »), le cache s'ouvre quand l'alarme est armée et
-se ferme quand elle est désarmée. `hlcamd` tourne donc seulement quand la
-maison est sous surveillance : cache fermé, il passe d'environ 68 % d'un
-cœur à 5 % (mesuré le 2026-11-19 sur rc.25, #50).
+Avec l'option `alarm.shutter_follows` (onglet Config, « Cache objectif »),
+le cache s'ouvre quand l'alarme est armée et se ferme quand elle est
+désarmée. `hlcamd` tourne donc seulement quand la maison est sous
+surveillance : cache fermé, il passe d'environ 68 % d'un cœur à 5 %
+(mesuré le 2026-11-19 sur rc.25, #50).
 
-- Ouvert dès le délai de sortie, pour que `hlcamd` ait repris avant la fin
-  du délai ; dans tous les modes armés, nuit compris (et `armed_home`,
-  `armed_vacation`… d'Alarmo).
+| Option | Interface | Cache ouvert |
+|---|---|---|
+| `none` (défaut) | Manuel | jamais par l'alarme |
+| `away` | Suit l'alarme en mode absence | en absence (`armed_away`, et `armed_vacation` d'Alarmo) ; fermé en nuit, `armed_home` et `armed_custom_bypass` |
+| `all` | Suit l'alarme dans tous les modes | dans tous les modes armés |
+
+- Délai de sortie : avec `all`, ouvert dès son début, pour que `hlcamd`
+  ait repris avant sa fin. Avec `away`, ouvert dès son début si le moteur
+  autonome arme l'absence ; en mode Alarmo, qui ne dit pas quel mode il
+  arme, le cache attend l'état armé (la détection met alors une quinzaine
+  de secondes à revenir).
+- Alarme déclenchée (délai d'entrée, alerte) : ouvert avec `away` comme
+  avec `all`, quel que soit le mode armé.
 - Fermé au désarmement, y compris après un déclenchement.
 - Seuls ces changements bougent le cache : ouvert ou fermé à la main (web,
-  HA, HomeKit), il reste ainsi jusqu'au prochain armement ou désarmement.
+  HA, HomeKit), il reste ainsi jusqu'au prochain.
 - Au démarrage, rien ne bouge : le cache garde son dernier état.
-- Fonctionne en mode autonome comme en mode Alarmo. Désactivé par défaut,
-  appliqué sans redémarrage.
+- Fonctionne en mode autonome comme en mode Alarmo, appliqué sans
+  redémarrage.
 
 Alarme désarmée, plus d'image ni de détection de personnes : les capteurs
 de détection (HA, HomeKit) et l'enregistrement HomeKit Secure Video ne
