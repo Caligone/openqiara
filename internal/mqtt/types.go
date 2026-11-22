@@ -20,6 +20,11 @@ type discoveryPayload struct {
 	// camera's own entities only.
 	Availability []availabilityItem `json:"availability,omitempty"`
 	Device       haDevice           `json:"device"`
+
+	// Siren: HA offers volume and duration unless told not to, and both
+	// would be ignored (the alert's level is set by the arming frame).
+	SupportVolumeSet *bool `json:"support_volume_set,omitempty"`
+	SupportDuration  *bool `json:"support_duration,omitempty"`
 }
 
 // availabilityItem points an entity at the topic that says whether the camera

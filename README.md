@@ -37,7 +37,7 @@ Si tu tombes sur un cas non couvert, ouvre une issue avec les logs pertinents de
 | Events détecteurs d'ouverture (DWS) | ✅ |
 | Events mouvement PIR | ✅ |
 | Clavier (KPD) codes + armement/désarmement | ✅ (jusqu'à 10 codes) |
-| Déclenchement sirène (SRN) | ✅ (son discret ; voir limitations pour le wail pleine puissance) |
+| Déclenchement sirène (SRN) | ✅ (alerte au niveau 100, le bouton « Tester » joue le son discret) |
 | Moteur d'alarme autonome | ✅ (source Local/Remote, grâce post-armement) |
 | Mode bridge Alarmo | ✅ |
 | Auto-discovery MQTT pour HA | ✅ |
