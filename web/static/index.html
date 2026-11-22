@@ -233,7 +233,16 @@ a { color: var(--primary); }
         <label>Durée de l'alarme (s) <span style="color:var(--text-muted);font-size:12px">510 s au plus</span></label>
         <input type="number" id="cfg-wail-duration" min="1" max="510" step="1">
       </div>
-      <p style="color:var(--text-muted);font-size:12px">En mode Alarmo, ces délais ne servent que si la caméra tombe en panne : la sirène armée prend alors le relais. Réglez-les comme ceux d'Alarmo.</p>
+      <p style="color:var(--text-muted);font-size:12px;margin-bottom:12px">En mode Alarmo, ces délais ne servent que si la caméra tombe en panne : la sirène armée prend alors le relais. Réglez-les comme ceux d'Alarmo.</p>
+      <div class="form-group">
+        <label>Cache objectif</label>
+        <select id="cfg-shutter-follows">
+          <option value="none">Manuel</option>
+          <option value="away">Suit l'alarme en mode absence</option>
+          <option value="all">Suit l'alarme dans tous les modes</option>
+        </select>
+        <small style="display:block;margin-top:4px;font-size:12px;color:var(--text-muted)">Ouvert quand l'alarme est armée, fermé quand elle est désarmée. « En mode absence » : ouvert seulement en absence (et vacances d'Alarmo), fermé en nuit et home. Dans les deux cas, il s'ouvre si l'alarme se déclenche. Cache fermé, la caméra se met en pause : plus d'image ni de détection de personnes. Un cache ouvert ou fermé à la main reste ainsi jusqu'au prochain changement.</small>
+      </div>
       <hr style="border:none;border-top:1px solid var(--border);margin:20px 0">
 
       <!-- Avancé (plié par défaut) -->
@@ -809,6 +818,7 @@ async function loadConfig() {
       document.getElementById('cfg-arming-delay').value = d.alarm.arming_delay_seconds ?? 60;
       document.getElementById('cfg-pending-delay').value = d.alarm.pending_delay_seconds ?? 60;
       document.getElementById('cfg-wail-duration').value = d.alarm.wail_duration_seconds ?? 300;
+      document.getElementById('cfg-shutter-follows').value = d.alarm.shutter_follows || 'none';
       window.currentAlarmMode = mode;
     }
     const alarmMode = (d.alarm && d.alarm.mode) || 'standalone';
@@ -904,6 +914,7 @@ document.getElementById('cfg-save-all').addEventListener('click', async () => {
       arming_delay_seconds: parseInt(document.getElementById('cfg-arming-delay').value, 10),
       pending_delay_seconds: parseInt(document.getElementById('cfg-pending-delay').value, 10),
       wail_duration_seconds: parseInt(document.getElementById('cfg-wail-duration').value, 10),
+      shutter_follows: document.getElementById('cfg-shutter-follows').value,
     })
   }));
 

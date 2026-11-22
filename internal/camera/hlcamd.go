@@ -109,10 +109,10 @@ func (r *HlcamdResumer) callResume(ctx context.Context, reason string) bool {
 }
 
 // Shutter follows the privacy shutter: closed, hlcamd's streams are paused,
-// its vision analysis with them (about 85 % of a core down to 5 %, measured
-// 2026-10-10, #50), and nothing resumes them until it opens. hlcamd stays
-// alive for watchdog_mcu. Also called at start: hlcamd starts paused, and
-// may not be on fbxbus yet, hence the retries.
+// its vision analysis with them (about 68 % of a core down to 5 %, measured
+// 2026-11-19 on rc.25, #50), and nothing resumes them until it opens. hlcamd
+// stays alive for watchdog_mcu. Also called at start: hlcamd starts paused,
+// and may not be on fbxbus yet, hence the retries.
 func (r *HlcamdResumer) Shutter(ctx context.Context, open bool) {
 	r.closed.Store(!open)
 	method := "resume_streams"

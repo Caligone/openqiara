@@ -23,19 +23,15 @@ type alarmoSiren interface {
 // Alarmo's states arrive on MQTT's goroutines: their commands go through
 // one queue, in order. In tests, synchronous runs them inline.
 type sirenController struct {
+	commandQueue
 	siren alarmoSiren
-	ctx   context.Context
 
 	mu   sync.Mutex
 	last string // Alarmo's last state handled, "" before the first
-
-	synchronous bool // tests only
-	queue       chan func()
-	startOnce   sync.Once
 }
 
 func newSirenController(ctx context.Context, siren alarmoSiren) *sirenController {
-	return &sirenController{siren: siren, ctx: ctx, queue: make(chan func(), 16)}
+	return &sirenController{commandQueue: newCommandQueue(ctx), siren: siren}
 }
 
 // nightStates are Alarmo's armed states where night-allowed sensors are
@@ -76,28 +72,4 @@ func (s *sirenController) Handle(newState string) {
 			s.siren.Alert()
 		}
 	})
-}
-
-// run runs fn in the siren's command queue, or inline in tests.
-func (s *sirenController) run(fn func()) {
-	if s.synchronous {
-		fn()
-		return
-	}
-	s.startOnce.Do(func() {
-		go func() {
-			for {
-				select {
-				case fn := <-s.queue:
-					fn()
-				case <-s.ctx.Done():
-					return
-				}
-			}
-		}()
-	})
-	select {
-	case s.queue <- fn:
-	case <-s.ctx.Done():
-	}
 }
