@@ -108,6 +108,8 @@ func buildDiscoveryPayload(prefix string, sensor camera.Sensor) (discoveryPayloa
 		p.JSONAttributesTemplate = `{"battery": {{ value_json.battery }}, "reachable": {{ value_json.reachable | lower }}, "state": "{{ value_json.state | default('') }}"}`
 		p.PayloadOn = "true"
 		p.PayloadOff = "false"
+		no := false
+		p.SupportVolumeSet, p.SupportDuration = &no, &no
 	}
 
 	return p, true

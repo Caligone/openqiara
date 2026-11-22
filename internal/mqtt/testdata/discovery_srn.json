@@ -16,5 +16,7 @@
     "manufacturer": "Qiara/Cofidur",
     "model": "HOMELABSRN",
     "via_device": "openqiara_camera"
-  }
+  },
+  "support_volume_set": false,
+  "support_duration": false
 }
