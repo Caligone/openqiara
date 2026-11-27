@@ -240,9 +240,8 @@ func (s *Server) routes() (*http.ServeMux, error) {
 	mux.HandleFunc("DELETE /api/v1/sensors/{id}", s.cors(s.handleDeleteSensor))
 	mux.HandleFunc("PUT /api/v1/sensors/{id}", s.cors(s.handleUpdateSensor))
 
-	// Ressources — codes du clavier. Mono-KPD assumé : s'il y a
-	// plusieurs claviers appairés, on répond 409 plutôt que d'en choisir
-	// un au hasard (cf. requireSingleKPD).
+	// Ressources — codes d'un clavier, désigné par ?sensor_id= ; sans lui,
+	// le seul clavier appairé, 409 s'il y en a plusieurs (cf. resolveKPD).
 	mux.HandleFunc("GET /api/v1/kpd/codes", s.cors(s.handleGetKPDCodes))
 	mux.HandleFunc("PUT /api/v1/kpd/codes", s.cors(s.handlePutKPDCodes))
 
@@ -1236,14 +1235,22 @@ func (s *Server) handleSetAlarm(w http.ResponseWriter, r *http.Request) {
 // persistance, sans que l'utilisateur puisse le savoir.
 var (
 	errNoKPD       = fmt.Errorf("aucun clavier (KPD) appairé")
-	errMultipleKPD = fmt.Errorf("plusieurs claviers appairés, ciblage requis")
+	errMultipleKPD = fmt.Errorf("plusieurs claviers appairés, préciser sensor_id")
 )
 
-// requireSingleKPD résout LE clavier de l'installation. L'API assume un
-// KPD unique : s'il y en a plusieurs, on refuse explicitement au lieu de
-// choisir.
-func (s *Server) requireSingleKPD() (*config.SensorEntry, error) {
+// resolveKPD résout le clavier visé : celui de ?sensor_id=, sinon le seul
+// clavier appairé. S'il y en a plusieurs sans sensor_id, on refuse au lieu
+// de choisir.
+func (s *Server) resolveKPD(r *http.Request) (*config.SensorEntry, error) {
 	cfg := s.store.Get()
+	if v := r.URL.Query().Get("sensor_id"); v != "" {
+		id, err := strconv.Atoi(v)
+		i := slices.IndexFunc(cfg.Sensors, func(se config.SensorEntry) bool { return se.Type == "KPD" && se.ID == id })
+		if err != nil || i < 0 {
+			return nil, fmt.Errorf("aucun clavier (KPD) d'id %q", v)
+		}
+		return &cfg.Sensors[i], nil
+	}
 	idx := -1
 	for i, se := range cfg.Sensors {
 		if se.Type != "KPD" {
@@ -1301,7 +1308,7 @@ func validateKPDCodes(codes []config.KPDCode) ([]config.KPDCode, error) {
 // pour que l'utilisateur les retrouve. 404 si aucun clavier n'est appairé,
 // liste vide pour un clavier sans code.
 func (s *Server) handleGetKPDCodes(w http.ResponseWriter, r *http.Request) {
-	kpd, err := s.requireSingleKPD()
+	kpd, err := s.resolveKPD(r)
 	if err != nil {
 		writeKPDErr(w, err)
 		return
@@ -1328,7 +1335,7 @@ func (s *Server) handlePutKPDCodes(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	kpd, err := s.requireSingleKPD()
+	kpd, err := s.resolveKPD(r)
 	if err != nil {
 		writeKPDErr(w, err)
 		return
@@ -1347,7 +1354,7 @@ func (s *Server) handlePutKPDCodes(w http.ResponseWriter, r *http.Request) {
 		rc.Reload()
 	}
 
-	s.log.Info("KPD codes updated", "count", len(codes))
+	s.log.Info("KPD codes updated", "sensor_id", kpd.ID, "count", len(codes))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 

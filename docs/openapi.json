@@ -547,7 +547,7 @@
             "$ref": "#/components/responses/Unauthorized"
           },
           "404": {
-            "description": "Aucun clavier appairé.",
+            "description": "Aucun clavier appairé, ou `sensor_id` ne désigne pas un clavier.",
             "content": {
               "application/json": {
                 "schema": {
@@ -557,7 +557,7 @@
             }
           },
           "409": {
-            "description": "Plusieurs claviers appairés : l'API refuse d'en choisir un.",
+            "description": "Plusieurs claviers appairés et pas de `sensor_id` : le serveur refuse de choisir.",
             "content": {
               "application/json": {
                 "schema": {
@@ -566,7 +566,19 @@
               }
             }
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "sensor_id",
+            "in": "query",
+            "required": false,
+            "description": "Id du clavier visé. Facultatif avec un seul clavier appairé, obligatoire s'il y en a plusieurs.",
+            "schema": {
+              "type": "integer"
+            },
+            "example": 14
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -627,7 +639,7 @@
             "$ref": "#/components/responses/Unauthorized"
           },
           "404": {
-            "description": "Aucun clavier appairé.",
+            "description": "Aucun clavier appairé, ou `sensor_id` ne désigne pas un clavier.",
             "content": {
               "application/json": {
                 "schema": {
@@ -637,7 +649,7 @@
             }
           },
           "409": {
-            "description": "Plusieurs claviers appairés : l'API refuse d'en choisir un.",
+            "description": "Plusieurs claviers appairés et pas de `sensor_id` : le serveur refuse de choisir.",
             "content": {
               "application/json": {
                 "schema": {
@@ -656,7 +668,19 @@
               }
             }
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "sensor_id",
+            "in": "query",
+            "required": false,
+            "description": "Id du clavier visé. Facultatif avec un seul clavier appairé, obligatoire s'il y en a plusieurs.",
+            "schema": {
+              "type": "integer"
+            },
+            "example": 14
+          }
+        ]
       }
     },
     "/api/v1/alarm": {
