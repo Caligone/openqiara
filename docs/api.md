@@ -138,8 +138,12 @@ si l'utilisateur abandonne.
 
 | Méthode | Chemin | Corps | Réponse |
 |---|---|---|---|
-| `GET` | `/api/v1/kpd/codes` | — | `{sensor_id, codes: [{password, label?}]}` |
-| `PUT` | `/api/v1/kpd/codes` | `{codes: [{password, label?}]}` | `{ok:true}` |
+| `GET` | `/api/v1/kpd/codes[?sensor_id=N]` | — | `{sensor_id, codes: [{password, label?}]}` |
+| `PUT` | `/api/v1/kpd/codes[?sensor_id=N]` | `{codes: [{password, label?}]}` | `{ok:true}` |
+
+`sensor_id` désigne le clavier. Facultatif avec un seul clavier appairé ;
+s'il y en a plusieurs, sans lui la réponse est `409`. Chaque clavier a sa
+propre liste.
 
 `PUT` remplace la liste entière : relire, modifier, renvoyer. Le clavier
 reçoit la liste à chaque réveil et vérifie lui-même le code tapé.

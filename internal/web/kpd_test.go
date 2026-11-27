@@ -97,3 +97,45 @@ func TestKPDCodesRejected(t *testing.T) {
 		})
 	}
 }
+
+// TestKPDCodesSeveralKeypads: with two keypads, sensor_id picks the one
+// read or written, the other keeps its codes; without it, 409 rather than
+// a keypad picked at random (#86).
+func TestKPDCodesSeveralKeypads(t *testing.T) {
+	h, store := kpdTestServer(t, []config.KPDCode{{Password: "1111"}})
+	if err := store.Update(func(c *config.Config) {
+		c.Sensors = append(c.Sensors, config.SensorEntry{ID: 31, Type: "KPD", KPDCodes: []config.KPDCode{{Password: "3333"}}})
+	}); err != nil {
+		t.Fatalf("seed store: %v", err)
+	}
+
+	for _, m := range []string{"GET", "PUT"} {
+		if code, _ := kpdRequest(t, h, m, "/api/v1/kpd/codes", `{"codes":[{"password":"9999"}]}`); code != http.StatusConflict {
+			t.Errorf("%s without sensor_id = %d, want 409", m, code)
+		}
+	}
+	if code, body := kpdRequest(t, h, "GET", "/api/v1/kpd/codes?sensor_id=31", ""); code != http.StatusOK ||
+		!strings.Contains(body, `"sensor_id":31`) || !strings.Contains(body, "3333") {
+		t.Errorf("GET sensor_id=31 = %d %s, want keypad 31's codes", code, body)
+	}
+	if code, body := kpdRequest(t, h, "PUT", "/api/v1/kpd/codes?sensor_id=31", `{"codes":[{"password":"4444"},{"password":"5555"}]}`); code != http.StatusOK {
+		t.Fatalf("PUT sensor_id=31 = %d %s", code, body)
+	}
+	got := map[int][]config.KPDCode{}
+	for _, se := range store.Get().Sensors {
+		got[se.ID] = se.KPDCodes
+	}
+	if want := []config.KPDCode{{Password: "1111"}}; !reflect.DeepEqual(got[14], want) {
+		t.Errorf("keypad 14 = %v, want %v untouched", got[14], want)
+	}
+	if want := []config.KPDCode{{Password: "4444"}, {Password: "5555"}}; !reflect.DeepEqual(got[31], want) {
+		t.Errorf("keypad 31 = %v, want %v", got[31], want)
+	}
+
+	// Not a keypad, or no such sensor: 404, nothing written.
+	for _, id := range []string{"23", "99", "x"} {
+		if code, _ := kpdRequest(t, h, "PUT", "/api/v1/kpd/codes?sensor_id="+id, `{"codes":[{"password":"9999"}]}`); code != http.StatusNotFound {
+			t.Errorf("PUT sensor_id=%s = %d, want 404", id, code)
+		}
+	}
+}

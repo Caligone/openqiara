@@ -128,6 +128,7 @@ a { color: var(--primary); }
 
     <div class="card">
       <div class="card-title" style="margin-bottom:12px">Codes clavier (KPD)</div>
+      <select id="kpd-select" style="display:none;margin-bottom:12px" onchange="kpdTarget=+this.value;fetchCodes()"></select>
       <div id="codes-list" style="margin-bottom:12px"></div>
       <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:12px">
         <div style="font-size:14px;font-weight:500;margin-bottom:8px">Ajouter un code</div>
@@ -698,6 +699,29 @@ async function setAlarm(action) {
 // --- KPD Codes ---
 // The list as last read: add and delete PUT it back whole.
 let kpdCodes = [];
+// The keypad shown, by sensor id: chosen in #kpd-select when there are
+// several, null when there is one (the server then takes it).
+let kpdTarget = null;
+
+function codesURL() {
+  return V1 + '/kpd/codes' + (kpdTarget ? '?sensor_id=' + kpdTarget : '');
+}
+
+// fillKPDSelect shows a choice of keypad when there are several, and keeps
+// the one chosen while it is still paired.
+async function fillKPDSelect() {
+  const sel = document.getElementById('kpd-select');
+  const kpds = (await (await fetch(V1 + '/sensors')).json()).filter(s => s.type === 'KPD');
+  if (kpds.length < 2) {
+    sel.style.display = 'none';
+    kpdTarget = null;
+    return;
+  }
+  if (!kpds.some(k => k.id === kpdTarget)) kpdTarget = kpds[0].id;
+  sel.innerHTML = kpds.map(k => '<option value="' + k.id + '"' + (k.id === kpdTarget ? ' selected' : '') + '>' +
+    escapeHTML(k.label || 'Clavier') + ' (#' + k.id + ')</option>').join('');
+  sel.style.display = '';
+}
 
 // codeName is how a code is shown: its label, or its rank in the list as
 // the daemon's log names it.
@@ -708,7 +732,8 @@ function codeName(i) {
 async function fetchCodes() {
   const list = document.getElementById('codes-list');
   try {
-    const r = await fetch(V1 + '/kpd/codes');
+    await fillKPDSelect();
+    const r = await fetch(codesURL());
     const d = await r.json();
     if (d.error) {
       // 404 = aucun clavier appairé (état normal, pas une panne).
@@ -740,7 +765,7 @@ async function saveCodes(codes, done) {
   const msg = document.getElementById('codes-msg');
   msg.textContent = '';
   try {
-    const r = await fetch(V1 + '/kpd/codes', {
+    const r = await fetch(codesURL(), {
       method: 'PUT',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({codes: codes})
